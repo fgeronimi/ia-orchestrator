@@ -1,0 +1,30 @@
+# Installation :
+#   sudo cp infra/systemd/orchestrator-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now orchestrator-bot
+# Logs :
+#   journalctl -u orchestrator-bot -f
+
+[Unit]
+Description=Orchestrateur IA - bot Discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fgeronimi
+WorkingDirectory=/home/fgeronimi/ia-orchestrator
+EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+# nvm n'existe pas dans le contexte systemd : chemin node explicite requis.
+# Vérifier avec :  ls ~/.nvm/versions/node/   et ajuster la version ici.
+Environment=PATH=/home/fgeronimi/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/fgeronimi/ia-orchestrator/.venv/bin/python bot.py
+Restart=on-failure
+RestartSec=10
+
+# Durcissement minimal
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
