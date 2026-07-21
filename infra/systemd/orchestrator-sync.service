@@ -1,0 +1,20 @@
+# Synchronisation git périodique (anti-drift entre le Pi et le Mac).
+# Installation :  make install-timer
+# Logs :          journalctl -u orchestrator-sync -f
+
+[Unit]
+Description=Orchestrateur IA - synchronisation git
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=fgeronimi
+WorkingDirectory=/home/fgeronimi/ia-orchestrator
+EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash /home/fgeronimi/ia-orchestrator/infra/sync.sh
+
+# Durcissement minimal (pas de NoNewPrivileges : le script appelle sudo -n
+# pour redémarrer les services quand du code Python a changé).
+PrivateTmp=true

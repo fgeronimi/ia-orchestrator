@@ -118,11 +118,15 @@ ia-orchestrator/
 ├── data/
 │   └── restos.json            # liste restos (versionnée, écrite par les 2 services)
 ├── state/                     # runtime, gitignored (incoming/, futurs .db)
+├── Makefile                   # exploitation : sync, deploy, env-push/pull, logs
 ├── infra/
 │   ├── setup.sh               # install idempotente (Pi ou VPS Debian)
+│   ├── sync.sh                # sync git anti-drift (appelé par le timer)
 │   └── systemd/
 │       ├── orchestrator-bot.service      # bot.py
-│       └── orchestrator-server.service   # server.py
+│       ├── orchestrator-server.service   # server.py
+│       ├── orchestrator-sync.service     # sync.sh (oneshot)
+│       └── orchestrator-sync.timer       # toutes les 10 min
 └── docs/
     └── architecture-mini-serveur-ia.md   # ce fichier
 ```
@@ -153,6 +157,44 @@ ia-orchestrator/
 ---
 
 ## 5. Exploitation (commandes réelles)
+
+**Tout passe par le `Makefile`** — `make` seul liste les cibles, séparées en
+« sur le Pi » et « depuis le Mac ».
+
+| Depuis le Mac | Effet |
+|---|---|
+| `make deploy` | push du code + `make sync` sur le Pi (restart inclus si `.py` modifié) |
+| `make remote-logs` / `remote-status` | logs et état du Pi via SSH |
+| `make env-pull` / `env-push` | récupère/envoie le `.env` (sauvegarde horodatée avant écrasement, restart après push) |
+| `make env-diff` | compare les **clés** des deux `.env` — jamais les valeurs |
+
+| Sur le Pi | Effet |
+|---|---|
+| `make sync` | committe `data/`, rebase, push, restart si code changé |
+| `make pull` / `push` / `restart` / `status` / `logs` / `test` | opérations unitaires |
+| `make install-timer` | active la sync automatique toutes les 10 min |
+
+### Anti-drift git (`infra/sync.sh` + `orchestrator-sync.timer`)
+
+`data/restos.json` est versionné **et** écrit en continu par le Pi ; le code est
+édité depuis le Mac. Sans synchronisation régulière les deux divergent.
+
+Le timer lance `infra/sync.sh` toutes les 10 min : commit de `data/`, rebase,
+push, puis restart des services si un `.py` a changé. Silencieux quand il n'y a
+rien à faire.
+
+- **Règle qui garde les conflits rares :** le Pi est le seul à écrire `data/`,
+  le Mac ne touche qu'au code.
+- **En cas de conflit**, le script `rebase --abort` (jamais de résolution
+  automatique : perdre des restos en silence est pire qu'une alerte), notifie
+  Discord **une seule fois** via un marqueur `state/sync-conflit`, et repart
+  tout seul avec un « ✅ de nouveau opérationnel » une fois résolu.
+- Le restart automatique demande `sudo -n systemctl restart` sans mot de passe.
+  Sinon le script notifie que `make restart` est requis. Drop-in à créer :
+  ```
+  # /etc/sudoers.d/orchestrator  (via visudo -f)
+  fgeronimi ALL=(root) NOPASSWD: /bin/systemctl restart orchestrator-bot orchestrator-server
+  ```
 
 **Services (tournent en autonomie, restart auto, survivent au reboot) :**
 ```bash
@@ -202,9 +244,6 @@ jour si la version de Node change (`ls ~/.nvm/versions/node/`).
 ## 7. Reste à faire
 
 **Court terme**
-0. ⚠️ `data/restos.json` est versionné **et** modifié en continu par le Pi :
-   un `git pull` après ajout de restos va conflicter. Trancher : soit committer
-   depuis le Pi avant chaque pull, soit le sortir de git (et prévoir une sauvegarde).
 1. **Raccourci iOS** (2 iPhones) : "Partager vers" → POST `/upload` sur
    `http://100.122.194.119:5000/upload`, header `X-Shortcut-Token`. Remplace le `curl`.
 2. Installer **Tailscale sur les iPhones** (même compte) pour joindre le Pi hors LAN.
