@@ -4,9 +4,14 @@
 #   - LOCAL  : à lancer sur le Pi (systemd, services, git)
 #   - DEPUIS LE MAC : passent par SSH/scp vers le Pi (préfixe remote-, env-, deploy)
 #
-# Le host du Pi est surchargeable :  make deploy PI=100.122.194.119
+# Le host du Pi est surchargeable :  make deploy PI_HOST=100.122.194.119
+# (utile hors du LAN : passer par l'IP Tailscale)
 
-PI      ?= ia-orchestrator.home
+# Le user est explicite : sans lui, ssh utilise le login du Mac (francois.geronimi)
+# et le Pi refuse la connexion.
+PI_USER ?= fgeronimi
+PI_HOST ?= ia-orchestrator.home
+PI      := $(PI_USER)@$(PI_HOST)
 PI_DIR  ?= /home/fgeronimi/ia-orchestrator
 PYTHON  := $(shell test -x .venv/bin/python && echo .venv/bin/python || echo python3)
 SERVICES := orchestrator-bot orchestrator-server
@@ -59,7 +64,7 @@ geocode: ## Complète les coordonnées manquantes (Nominatim, 1 req/s)
 	@$(PYTHON) -m lib.geo
 
 carte: ## Affiche l'URL de la carte (token lu dans .env)
-	@echo "http://$(PI):5000/carte?t=$$(grep '^IOS_SHORTCUT_TOKEN=' .env | cut -d= -f2)"
+	@echo "http://$(PI_HOST):5000/carte?t=$$(grep '^IOS_SHORTCUT_TOKEN=' .env | cut -d= -f2)"
 
 install-timer: ## Installe le timer de synchronisation git (toutes les 10 min)
 	@sudo cp infra/systemd/orchestrator-sync.service infra/systemd/orchestrator-sync.timer \
