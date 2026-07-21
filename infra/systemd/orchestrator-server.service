@@ -1,0 +1,27 @@
+# Installation :
+#   sudo cp infra/systemd/orchestrator-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now orchestrator-server
+# Logs :
+#   journalctl -u orchestrator-server -f
+
+[Unit]
+Description=Orchestrateur IA - endpoint raccourci iOS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fgeronimi
+WorkingDirectory=/home/fgeronimi/ia-orchestrator
+EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+Environment=PATH=/home/fgeronimi/.nvm/versions/node/v20.19.0/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/fgeronimi/ia-orchestrator/.venv/bin/python server.py
+Restart=on-failure
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -88,7 +88,7 @@ if [ ! -d "$PROJECT_DIR/.venv" ]; then
   python3 -m venv "$PROJECT_DIR/.venv"
 fi
 "$PROJECT_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$PROJECT_DIR/.venv/bin/pip" install --quiet discord.py python-dotenv requests
+"$PROJECT_DIR/.venv/bin/pip" install --quiet discord.py python-dotenv requests flask
 
 # ------------------------------------------------------------------
 # 6. Récapitulatif des actions manuelles restantes
