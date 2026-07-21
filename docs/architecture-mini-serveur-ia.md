@@ -186,6 +186,16 @@ ia-orchestrator/
 | `make env-pull` / `env-push` | récupère/envoie le `.env` (sauvegarde horodatée avant écrasement, restart après push) |
 | `make env-diff` | compare les **clés** des deux `.env` — jamais les valeurs |
 
+**Prérequis SSH (une fois) :** les cibles distantes passent par
+`fgeronimi@ia-orchestrator.home`. Le user est explicite dans le Makefile
+(`PI_USER`) — sans lui, ssh tente le login du Mac (`francois.geronimi`) et le Pi
+répond `Permission denied (publickey)`. Déposer la clé :
+```bash
+ssh-copy-id fgeronimi@ia-orchestrator.home
+```
+Hors du LAN, `ia-orchestrator.home` ne résout pas : passer par Tailscale avec
+`make deploy PI_HOST=<ip-tailscale>` (ou un bloc `Host` dans `~/.ssh/config`).
+
 | Sur le Pi | Effet |
 |---|---|
 | `make sync` | committe `data/`, rebase, push, restart si code changé |
