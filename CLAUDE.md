@@ -34,6 +34,9 @@ Discord (pipeline dev) et par un endpoint HTTP appelé depuis un raccourci iOS
 5. **Secrets uniquement via `.env`** (jamais en clair, jamais commités). Tout
    nouveau secret → l'ajouter à `.env.example` (clé sans valeur) pour le documenter.
 6. **Cloisonnement des droits au niveau des tokens**, pas en multipliant les process.
+7. **La liste des restos passe par `lib/restos.py`** (`data/restos.json`) — jamais
+   d'écriture directe dans le fichier. Deux process y touchent (bot + server) ;
+   le module gère le verrou, la dédup et les filtres.
 
 ## Après modification de code
 
