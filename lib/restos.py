@@ -6,7 +6,10 @@ le même schéma et la même dédup.
 
 Un resto :
     {"nom", "adresse", "quartier", "statut": "a_faire"|"fait",
-     "tags": [...], "note", "avis", "ajoute_le", "fait_le"}
+     "tags": [...], "note", "avis", "ajoute_le", "fait_le", "lat", "lon"}
+
+lat/lon sont remplis best-effort par lib/geo (Nominatim) : un resto sans
+coordonnées reste valide, il n'apparaît simplement pas sur la carte.
 
 Les deux services (bot + server) écrivent dans ce fichier depuis des process
 distincts : chaque écriture prend un verrou fichier et remplace le JSON de
@@ -26,7 +29,7 @@ RESTOS_JSON = Path(__file__).parent.parent / "data" / "restos.json"
 _LOCK = RESTOS_JSON.with_suffix(".lock")
 
 CHAMPS = ("nom", "adresse", "quartier", "statut", "tags", "note", "avis",
-          "ajoute_le", "fait_le")
+          "ajoute_le", "fait_le", "lat", "lon")
 
 
 class RestoIntrouvable(LookupError):
@@ -118,6 +121,8 @@ def ajouter(data: dict) -> tuple[dict, bool]:
             "avis": None,
             "ajoute_le": date.today().isoformat(),
             "fait_le": None,
+            "lat": data.get("lat"),
+            "lon": data.get("lon"),
         }
         restos.append(entree)
         _sauver(restos)

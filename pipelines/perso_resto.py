@@ -8,7 +8,7 @@ la config OAuth Google Cloud — voir le TODO dans ce fichier.
 import json
 import re
 
-from lib import restos
+from lib import geo, restos
 from lib.claude import run_claude
 
 PROMPT_TEMPLATE = """Regarde l'image à ce chemin : {image_path}
@@ -42,7 +42,7 @@ def _extract_json(raw: str) -> dict:
 
 
 def _append_resto(data: dict) -> str:
-    entree, cree = restos.ajouter(data)
+    entree, cree = restos.ajouter(geo.enrichir(data))
     if not cree:
         return f"🍽️ Déjà dans la liste : **{entree['nom']}**"
     return f"🍽️ Ajouté à la liste restos : {restos.formater(entree)}"

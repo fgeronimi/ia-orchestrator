@@ -15,7 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 
-from lib import notify
+from lib import carte, notify
 from pipelines import perso_resto
 
 load_dotenv()
@@ -55,6 +55,18 @@ def upload():
         return jsonify({"status": "error", "error": str(exc)}), 500
     finally:
         dest.unlink(missing_ok=True)
+
+
+@app.route("/carte", methods=["GET"])
+def voir_carte():
+    """Carte des restos, à ouvrir dans un navigateur via Tailscale.
+
+    Le token passe par l'URL (?t=...) et non par un header : la page est faite
+    pour être mise en favori sur l'iPhone.
+    """
+    if not SHORTCUT_TOKEN or request.args.get("t") != SHORTCUT_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+    return carte.generer()
 
 
 @app.route("/health", methods=["GET"])

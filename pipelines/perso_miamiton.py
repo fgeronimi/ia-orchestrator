@@ -16,7 +16,7 @@ import json
 import re
 from datetime import date
 
-from lib import restos
+from lib import geo, restos
 from lib.claude import run_claude
 
 LIMITE_AFFICHAGE = 30
@@ -86,7 +86,7 @@ def _ajouter(intention: dict) -> str:
     ajoutes, doublons, erreurs = [], [], []
     for data in intention.get("restos") or []:
         try:
-            entree, cree = restos.ajouter(data)
+            entree, cree = restos.ajouter(geo.enrichir(data))
         except ValueError as exc:
             erreurs.append(str(exc))
             continue
