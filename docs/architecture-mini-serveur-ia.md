@@ -1,112 +1,206 @@
-# Mini-serveur IA — Architecture d'orchestration (v2, révisée)
+# ia-orchestrator — Architecture & état du système (v3)
 
-## 0. Contexte & objectif
-
-Plateforme personnelle d'orchestration d'agents IA (Claude Code) capable de :
-- Exécuter des tâches asynchrones / planifiées
-- Gérer plusieurs **pipelines indépendants** (dev, perso, futurs)
-- Cloisonner les secrets par usage
-- Démarrer simple et complexifier **uniquement quand un besoin réel apparaît**
-
-**Philosophie v2 :** un pipeline = un agent au départ. Le découpage multi-agents
-(Créateur / Vérificateur / Exécutant) est une *cible* documentée en annexe,
-pas le point de départ.
+> Document de référence, tenu à jour pour servir de contexte Claude Code.
+> Reflète l'état **réellement déployé**, pas seulement l'intention.
+> Dernière mise à jour : 2026-07-21.
 
 ---
 
-## 1. Décisions d'architecture
+## 0. Objectif
 
-| Sujet | Décision | Pourquoi |
-|---|---|---|
-| Hébergement | Pi 4 **ou** VPS (voir §2) — archi identique dans les deux cas | Migration triviale si besoin |
-| Bot Discord | **Fait maison, minimal** (~200-300 lignes, discord.py ou discord.js) | Il manipule les tokens OAuth Claude + Jira + GitHub : code 100% maîtrisé et auditable > framework communautaire non audité |
-| Agent engine | Claude Code CLI, auth abonnement Pro/Max (`claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`) | Pas de coût API |
-| State | SQLite | Suffisant, zéro infra |
-| Queue | Aucune au départ (appels séquentiels) | Redis seulement si concurrence réelle un jour |
-| Scheduling | systemd timers | Plus robuste que cron brut, logs intégrés |
-| Accès distant | Tailscale | Aucun port exposé sur internet |
-| Secrets | Un `.env` par pipeline, permissions strictes, jamais commité | Scope minimal par usage |
-| Notifications | **Discord uniquement pour le moment** (DM ou canal via le bot, push iOS par l'app Discord) | Zéro brique en plus ; ntfy envisagé plus tard pour le pipeline perso (copine sans Discord) |
+Plateforme personnelle d'orchestration d'agents Claude Code, pilotée par Discord
+et par un raccourci iOS. Tourne sur un Raspberry Pi 4 en autonomie (services
+systemd). Plusieurs **pipelines indépendants** ; complexité ajoutée seulement
+quand un besoin réel apparaît.
 
-## 2. Pipeline Dev (v0 : un seul agent)
+**Principe fondateur :** Discord/HTTP = bus d'événements. Le routeur ne contient
+aucune logique métier ; toute la logique vit dans `pipelines/*.py`.
 
+---
+
+## 1. Environnement réel
+
+| Élément | Valeur |
+|---|---|
+| Hôte | Raspberry Pi 4, 4GB RAM |
+| OS | Raspberry Pi OS Lite 64-bit (Debian, kernel 6.18 aarch64) |
+| User | `fgeronimi` |
+| Hostname LAN | `ia-orchestrator.home` (SSH local) |
+| IP Tailscale | `<ip-tailscale>` (accès distant, stable) |
+| Compte Tailscale | `<compte>` |
+| Node | v20 LTS via nvm (`~/.nvm/versions/node/`) |
+| Python | venv à `~/ia-orchestrator/.venv` |
+| Projet | `~/ia-orchestrator` |
+| Repo | GitHub `fgeronimi/ia-orchestrator` (push HTTPS + PAT, credential.helper store) |
+| Auth Claude | `CLAUDE_CODE_OAUTH_TOKEN` (abonnement, pas d'API key) |
+
+Accès distant : Tailscale (installé sur le Pi ; **à installer sur les iPhones et
+le Mac** pour bosser à distance). Raspberry Pi Connect dispo en secours (shell
+navigateur via connect.raspberrypi.com), mais ne rend pas les services HTTP
+joignables — Tailscale reste requis pour le raccourci iOS.
+
+---
+
+## 2. État des pipelines
+
+### Pipeline Dev — `pipelines/dev_jira.py` — ✅ v0 fonctionnel
 ```
-Discord #idees  ──(mention ou commande)──▶  Agent unique
-                                             ├─ crée le ticket Jira
-                                             └─ (plus tard) prend un ticket
-                                                taggé "ai-ready" → branche → MR
+Discord #idees  ──@mention──▶  bot.py route vers dev_jira.handle
+                               └─ Claude génère un brouillon de ticket structuré
+                                  (titre, description, critères, verdict IA-ready)
 ```
+- **État :** répond en direct dans Discord. Brouillon uniquement.
+- **Pas encore branché :** création réelle du ticket via l'API Jira
+  (`lib/jira.py` n'existe pas encore ; `JIRA_*` réservés dans `.env`).
+- **Manque Jira côté user** — repris quand dispo.
 
-- La "vérification IA-ready" du design initial devient une **checklist dans le
-  prompt** de l'agent, pas un agent séparé.
-- Le cloisonnement des droits se fait **au niveau des tokens** (un token Jira
-  write-only tickets, un PAT GitHub scoped au repo), pas en multipliant les process.
-- Évolution vers le découpage 3 agents : voir Annexe A, à activer seulement si
-  le mono-agent montre ses limites (conflits, dérives, besoin d'approbation humaine).
-
-## 3. Pipeline Perso (resto / réservations)
-
-**Interface : raccourci iOS "Partager vers", pas Discord.**
-Vous avez tous les deux des iPhones ; partager un screenshot doit prendre deux taps
-depuis n'importe quelle app, sans adopter une nouvelle messagerie.
-
+### Pipeline Perso — `pipelines/perso_resto.py` + `server.py` — ✅ v0 fonctionnel
 ```
-Screenshot iPhone
-  → Raccourci iOS "Partager" (toi + copine)
-  → POST HTTP vers le serveur via Tailscale (aucun port public)
-  → Agent Classifieur (vision)
-       ├─ resto      → append dans restos.md (repo git perso, consultable)
-       └─ réservation → event dans l'agenda Google partagé
+Screenshot ──▶ POST /upload (Tailscale, header X-Shortcut-Token)
+            ──▶ server.py sauve l'image dans state/incoming/
+            ──▶ perso_resto.handle_image : Claude (outil Read, vision) classe en JSON
+                  ├─ resto       → append data/restos.md          ✅
+                  ├─ reservation → résumé + notif (agenda Google = STUB)  ⚠️
+                  └─ autre       → notif "non classé"
+            ──▶ notify() → webhook Discord #miamiton
+            ──▶ image temporaire supprimée
 ```
+- **État :** testé de bout en bout via `curl` (ex. "Bofinger" ajouté à restos.md,
+  notif reçue dans #miamiton).
+- **STUB :** `lib/gcal.py` (Google Calendar) lève `NotImplementedError`. Une
+  réservation détectée renvoie juste l'info par notif pour ajout manuel.
+- **Pas encore fait :** le **raccourci iOS** (le flux marche, il manque juste le
+  déclencheur "Partager vers" sur les 2 iPhones à la place du `curl`).
 
-- Le raccourci iOS embarque un token simple (header) pour identifier qui envoie.
-- Tailscale doit être installé sur les deux iPhones (app gratuite, une fois).
-- Fallback si Tailscale gêne : mini endpoint exposé via Cloudflare Tunnel.
+---
 
-## 4. Structure de repo (plate, évolutive)
+## 3. Structure réelle du repo
 
 ```
 ia-orchestrator/
 ├── README.md
-├── .gitignore                # .env*, *.db, __pycache__...
-├── .env.example              # variables attendues, sans valeurs
-├── bot.py                    # routeur Discord minimal (fait maison)
-├── server.py                 # endpoint HTTP pour le raccourci iOS
+├── .gitignore                 # .env*, state/*.db, state/incoming/, gcal creds
+├── .env / .env.example        # .env NON versionné (chmod 600)
+├── bot.py                     # routeur Discord (mention → pipeline mappé par nom de canal)
+├── server.py                  # endpoint Flask /upload + /health (port 5000)
 ├── pipelines/
-│   ├── dev_jira.py           # agent unique pipeline dev
-│   └── perso_resto.py        # agent classifieur
+│   ├── dev_jira.py            # ✅ idée → brouillon ticket
+│   └── perso_resto.py         # ✅ image → restos.md / (stub) réservation
 ├── lib/
-│   ├── claude.py             # wrapper subprocess Claude Code
-│   ├── notify.py             # notifications (Discord pour l'instant, backend interchangeable)
-│   ├── jira.py               # appels API Jira
-│   ├── github.py             # appels API GitHub
-│   └── gcal.py               # appels API Google Calendar
-├── state/                    # SQLite, gitignored
+│   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
+│   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
+│   └── gcal.py                # ⚠️ STUB Google Calendar
+├── data/
+│   └── restos.md              # liste restos (versionnée)
+├── state/                     # runtime, gitignored (incoming/, futurs .db)
 ├── infra/
-│   ├── systemd/              # .service / .timer
-│   └── setup.sh              # install serveur (Pi ou VPS, même script)
+│   ├── setup.sh               # install idempotente (Pi ou VPS Debian)
+│   └── systemd/
+│       ├── orchestrator-bot.service      # bot.py
+│       └── orchestrator-server.service   # server.py
 └── docs/
-    └── architecture-mini-serveur-ia.md
+    └── architecture-mini-serveur-ia.md   # ce fichier
 ```
 
-Pas de dossiers vides "pour plus tard" : la structure émerge avec le besoin.
+> Note : `lib/jira.py` et `lib/github.py` sont **prévus mais pas encore créés** —
+> ne pas supposer leur existence.
 
-## 5. Roadmap
+---
 
-1. Serveur opérationnel (Pi ou VPS) : OS, Node, Claude Code, auth headless, Tailscale
-2. `bot.py` minimal : un canal, une commande, une réponse de Claude Code
-3. Pipeline dev v0 : Discord → ticket Jira
-4. Pipeline perso v0 : raccourci iOS → restos.md
-5. Extensions : MR automatiques, agenda partagé, puis seulement si besoin :
-   découpage multi-agents (Annexe A), Redis, monitoring
+## 4. Conventions (à respecter pour toute extension)
 
-## 6. Points de vigilance
+- **Un pipeline = un fichier** dans `pipelines/`, exposant
+  `async def handle(text, message) -> str` (déclencheur Discord) et/ou
+  `async def handle_image(image_path) -> str` (déclencheur HTTP).
+- **Enregistrer un pipeline** = ajouter une entrée `"<nom-canal>": module.handle`
+  dans le dict `PIPELINES` de `bot.py`. Le nom de canal Discord doit matcher
+  **exactement** (minuscules, sans accent — piège vécu : `idée` ≠ `idees`).
+- **Tout appel à Claude** passe par `lib/claude.run_claude()`. Jamais de
+  subprocess Claude ailleurs. Utiliser `allowed_tools` pour scoper les droits
+  (ex. `["Read"]` pour la vision, `[]` pour du raisonnement pur).
+- **Toute notif** passe par `lib/notify.notify()`. Ne pas poster en dur.
+- **Secrets** : uniquement via `.env` (chargé par `python-dotenv`), jamais en
+  clair dans le code, jamais commités. Nouveau secret → l'ajouter à `.env.example`
+  (clé sans valeur) pour documenter.
+- **Cloisonnement des droits = au niveau des tokens**, pas en multipliant les
+  process. Un token par usage, scope minimal.
 
-- **Si Pi** : SD 16GB limite (prévoir boot SSD/USB pour du 24/7), refroidissement
-  passif (throttling possible), usure microSD en écriture (SQLite + logs)
-- **Secrets** : jamais en clair dans le code, un token par usage, scope minimal
-- **Bot maison** : rester minimal ; chaque feature ajoutée au bot est du code à
-  maintenir — la logique va dans `pipelines/`, pas dans `bot.py`
+---
+
+## 5. Exploitation (commandes réelles)
+
+**Services (tournent en autonomie, restart auto, survivent au reboot) :**
+```bash
+sudo systemctl status orchestrator-bot        # pipeline dev (Discord)
+sudo systemctl status orchestrator-server     # pipeline perso (HTTP)
+journalctl -u orchestrator-bot -f             # logs live
+journalctl -u orchestrator-server -f
+sudo systemctl restart orchestrator-bot       # après modif de code/‑env
+```
+> ⚠️ Après un `git pull` de nouveau code, **redémarrer le service concerné**
+> (les process ne rechargent pas à chaud).
+
+**Déploiement d'une modif :**
+```bash
+cd ~/ia-orchestrator
+git pull                          # ou édition directe / scp
+sudo systemctl restart orchestrator-bot orchestrator-server
+```
+
+**Test manuel du serveur perso :**
+```bash
+curl http://localhost:5000/health
+curl -X POST http://localhost:5000/upload \
+  -H "X-Shortcut-Token: $IOS_SHORTCUT_TOKEN" \
+  -F "image=@/chemin/screenshot.jpg"
+```
+
+**Piège systemd connu :** nvm n'existe pas dans le contexte systemd. Les
+`.service` ont le chemin node en dur dans `Environment=PATH=...` — le mettre à
+jour si la version de Node change (`ls ~/.nvm/versions/node/`).
+
+---
+
+## 6. Variables d'environnement (`.env`)
+
+| Clé | Usage | État |
+|---|---|---|
+| `DISCORD_BOT_TOKEN` | bot.py (pipeline dev) | ✅ configuré |
+| `NOTIFY_CHANNEL_ID` | canal notif du bot (#idees) | ✅ |
+| `CLAUDE_CODE_OAUTH_TOKEN` | auth Claude Code | ✅ |
+| `IOS_SHORTCUT_TOKEN` | auth endpoint /upload | ✅ |
+| `DISCORD_WEBHOOK_URL` | notif hors-bot → #miamiton | ✅ |
+| `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | pipeline dev Jira | ⬜ à venir |
+
+---
+
+## 7. Reste à faire
+
+**Court terme**
+1. **Raccourci iOS** (2 iPhones) : "Partager vers" → POST `/upload` sur
+   `http://<ip-tailscale>:5000/upload`, header `X-Shortcut-Token`. Remplace le `curl`.
+2. Installer **Tailscale sur les iPhones** (même compte) pour joindre le Pi hors LAN.
+3. **VS Code Remote-SSH** depuis le Mac (via Tailscale) pour du dev confortable.
+
+**Moyen terme**
+4. **Google Calendar** : implémenter `lib/gcal.py` (projet Google Cloud, OAuth
+   "Application de bureau", creds dans `state/gcal_credentials.json`). Débloque
+   la branche réservation du pipeline perso.
+5. **Jira** : créer `lib/jira.py`, brancher `dev_jira.py` sur la vraie création
+   de ticket quand l'accès est dispo.
+
+**Si besoin avéré (pas avant)**
+6. Découpage multi-agents du pipeline dev (Créateur / Vérificateur / Exécutant),
+   voir Annexe A.
+7. Notifs par canal distinct (aujourd'hui un seul `DISCORD_WEBHOOK_URL`).
+8. systemd **timers** pour des tâches planifiées (cron-like).
+9. Migration VPS (Hetzner ~4,50 €/mois) : rejouer `infra/setup.sh` + copier
+   `.env` et l'état. Pertinent surtout pour de la dispo pendant absences
+   (ex. voyage Japon).
+
+**Vigilance matériel (Pi)**
+- microSD 16GB : limite pour du 24/7 long terme (usure écriture SQLite/logs) —
+  envisager boot SSD/USB. Refroidissement passif : surveiller le throttling.
 
 ---
 
@@ -114,14 +208,11 @@ Pas de dossiers vides "pour plus tard" : la structure émerge avec le besoin.
 
 ```
 Discord #idees
-   → Agent "Créateur"     (token Jira write-only)     → crée le ticket
+   → Agent "Créateur"     (token Jira write-only)   → crée le ticket
 Webhook Jira / timer
-   → Agent "Vérificateur" (tokens read-only)          → tague "ai-ready"
+   → Agent "Vérificateur" (tokens read-only)        → tague "ai-ready"
 Trigger "ai-ready"
-   → Agent "Exécutant"    (PAT GitHub scoped repo)    → branche + MR liée
+   → Agent "Exécutant"    (PAT GitHub scoped repo)  → branche + MR liée
 ```
-
-Critères de déclenchement du découpage :
-- Besoin d'un point d'approbation humaine entre création et exécution
-- Volume de tickets rendant utile un tri automatisé en amont
-- Incident où un agent unique a eu trop de droits au mauvais moment
+Déclencheurs du découpage : besoin d'approbation humaine intercalée ; volume de
+tickets justifiant un tri auto ; incident de sur-permission d'un agent unique.
