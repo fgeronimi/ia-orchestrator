@@ -1,0 +1,16 @@
+# Déclenche orchestrator-sync.service toutes les 10 minutes.
+# Installation :  make install-timer
+# État :          systemctl list-timers orchestrator-sync
+
+[Unit]
+Description=Orchestrateur IA - sync git toutes les 10 min
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+# Évite que tous les timers du Pi partent à la même seconde
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

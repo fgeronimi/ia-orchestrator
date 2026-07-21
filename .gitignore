@@ -3,9 +3,8 @@
 .env.*
 !.env.example
 
-# État local
-state/*.db
-state/*.sqlite*
+# État local (runtime : images reçues, marqueurs, bases)
+state/
 
 # Verrou et écriture atomique du store restos
 data/*.lock

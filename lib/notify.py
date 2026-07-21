@@ -39,3 +39,16 @@ async def notify(message: str) -> None:
 
     # Dernier recours : au moins une trace dans les logs systemd
     print(f"[notify] {message}")
+
+
+if __name__ == "__main__":
+    # Entrée CLI pour les scripts shell (infra/sync.sh) : leurs notifs passent
+    # par ici aussi, plutôt que par un curl en dur vers le webhook.
+    #   .venv/bin/python -m lib.notify "message"
+    import asyncio
+    import sys
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    asyncio.run(notify(" ".join(sys.argv[1:]) or "(message vide)"))
