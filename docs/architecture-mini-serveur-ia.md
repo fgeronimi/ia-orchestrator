@@ -54,19 +54,42 @@ Discord #idees  ──@mention──▶  bot.py route vers dev_jira.handle
   (`lib/jira.py` n'existe pas encore ; `JIRA_*` réservés dans `.env`).
 - **Manque Jira côté user** — repris quand dispo.
 
-### Pipeline Perso — `pipelines/perso_resto.py` + `server.py` — ✅ v0 fonctionnel
+### Pipeline Perso image — `pipelines/perso_resto.py` + `server.py` — ✅ v0 fonctionnel
 ```
 Screenshot ──▶ POST /upload (Tailscale, header X-Shortcut-Token)
             ──▶ server.py sauve l'image dans state/incoming/
             ──▶ perso_resto.handle_image : Claude (outil Read, vision) classe en JSON
-                  ├─ resto       → append data/restos.md          ✅
+                  ├─ resto       → lib/restos.ajouter() (dédup)   ✅
                   ├─ reservation → résumé + notif (agenda Google = STUB)  ⚠️
                   └─ autre       → notif "non classé"
             ──▶ notify() → webhook Discord #miamiton
             ──▶ image temporaire supprimée
 ```
-- **État :** testé de bout en bout via `curl` (ex. "Bofinger" ajouté à restos.md,
+- **État :** testé de bout en bout via `curl` (ex. "Bofinger" ajouté à la liste,
   notif reçue dans #miamiton).
+
+### Pipeline Perso conversationnel — `pipelines/perso_miamiton.py` — ✅ v0
+```
+Discord #miamiton ──@mention──▶ perso_miamiton.handle
+                                └─ Claude (allowed_tools=[]) → intention JSON
+                                   {lister | ajouter | marquer_fait | supprimer
+                                    | corriger | discuter}
+                                └─ Python exécute sur lib/restos et formate
+```
+- Claude ne lit **jamais** le fichier : il ne fait que traduire le message en
+  intention. Le filtrage ("pas faits", "dans le 11e", par tag) est déterministe.
+- Localisation : l'utilisateur **tape le lieu** ("près de Bastille", "11e") —
+  matché sur `quartier` + `adresse` (+ code postal parisien). Pas de GPS.
+- **État :** câblage intention → action testé avec des réponses simulées ;
+  reste à valider en réel dans Discord après redémarrage du bot.
+
+### Store restos — `lib/restos.py` + `data/restos.json`
+Source de vérité unique, partagée par les deux pipelines perso (même schéma,
+même dédup). Un resto : `nom, adresse, quartier, statut (a_faire|fait), tags,
+note, avis, ajoute_le, fait_le`. Écritures sous verrou `fcntl` + `os.replace`,
+car le bot et le serveur sont deux process distincts.
+
+> `data/restos.md` (ancienne liste plate) a été **remplacé** par `restos.json`.
 - **STUB :** `lib/gcal.py` (Google Calendar) lève `NotImplementedError`. Une
   réservation détectée renvoie juste l'info par notif pour ajout manuel.
 - **Pas encore fait :** le **raccourci iOS** (le flux marche, il manque juste le
@@ -85,13 +108,15 @@ ia-orchestrator/
 ├── server.py                  # endpoint Flask /upload + /health (port 5000)
 ├── pipelines/
 │   ├── dev_jira.py            # ✅ idée → brouillon ticket
-│   └── perso_resto.py         # ✅ image → restos.md / (stub) réservation
+│   ├── perso_resto.py         # ✅ image → store restos / (stub) réservation
+│   └── perso_miamiton.py      # ✅ conversation #miamiton → CRUD + requêtes restos
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
+│   ├── restos.py              # store restos (JSON, verrou, dédup, filtres)
 │   └── gcal.py                # ⚠️ STUB Google Calendar
 ├── data/
-│   └── restos.md              # liste restos (versionnée)
+│   └── restos.json            # liste restos (versionnée, écrite par les 2 services)
 ├── state/                     # runtime, gitignored (incoming/, futurs .db)
 ├── infra/
 │   ├── setup.sh               # install idempotente (Pi ou VPS Debian)
@@ -177,6 +202,9 @@ jour si la version de Node change (`ls ~/.nvm/versions/node/`).
 ## 7. Reste à faire
 
 **Court terme**
+0. ⚠️ `data/restos.json` est versionné **et** modifié en continu par le Pi :
+   un `git pull` après ajout de restos va conflicter. Trancher : soit committer
+   depuis le Pi avant chaque pull, soit le sortir de git (et prévoir une sauvegarde).
 1. **Raccourci iOS** (2 iPhones) : "Partager vers" → POST `/upload` sur
    `http://<ip-tailscale>:5000/upload`, header `X-Shortcut-Token`. Remplace le `curl`.
 2. Installer **Tailscale sur les iPhones** (même compte) pour joindre le Pi hors LAN.

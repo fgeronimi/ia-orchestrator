@@ -7,6 +7,10 @@
 state/*.db
 state/*.sqlite*
 
+# Verrou et écriture atomique du store restos
+data/*.lock
+data/*.tmp
+
 # Python
 __pycache__/
 *.pyc
