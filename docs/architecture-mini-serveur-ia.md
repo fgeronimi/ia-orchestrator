@@ -1,4 +1,4 @@
-# ia-orchestrator — Architecture & état du système (v3)
+# ia-orchestrator — Architecture & état du système (v4)
 
 > Document de référence, tenu à jour pour servir de contexte Claude Code.
 > Reflète l'état **réellement déployé**, pas seulement l'intention.
@@ -67,6 +67,10 @@ Screenshot ──▶ POST /upload (Tailscale, header X-Shortcut-Token)
 ```
 - **État :** testé de bout en bout via `curl` (ex. "Bofinger" ajouté à la liste,
   notif reçue dans #miamiton).
+- **STUB :** `lib/gcal.py` (Google Calendar) lève `NotImplementedError`. Une
+  réservation détectée renvoie juste l'info par notif pour ajout manuel.
+- **Pas encore fait :** le **raccourci iOS** (le flux marche, il manque juste le
+  déclencheur "Partager vers" sur les 2 iPhones à la place du `curl`).
 
 ### Pipeline Perso conversationnel — `pipelines/perso_miamiton.py` — ✅ v0
 ```
@@ -83,17 +87,29 @@ Discord #miamiton ──@mention──▶ perso_miamiton.handle
 - **État :** câblage intention → action testé avec des réponses simulées ;
   reste à valider en réel dans Discord après redémarrage du bot.
 
+### Géoloc & carte — `lib/geo.py`, `lib/carte.py`, `GET /carte`
+```
+ajout d'un resto ──▶ geo.enrichir() : Nominatim (OSM) → lat/lon (+ adresse,
+                     quartier si Claude ne les a pas fournis)
+GET /carte?t=<IOS_SHORTCUT_TOKEN> ──▶ carte.generer() : page Leaflet autonome
+```
+- **Géocodage best-effort** : sans réseau ou adresse introuvable, le resto est
+  enregistré sans coordonnées — il n'apparaît juste pas sur la carte.
+  `make geocode` rattrape les entrées sans `lat` (1 req/s, politique OSM).
+- **Nominatim** : gratuit, sans clé. En contrepartie, User-Agent identifiant et
+  1 requête/seconde imposés — respecté par `backfill()`.
+- **Carte** : générée à la demande depuis le store (donc toujours à jour),
+  marqueurs orange = à faire / vert = fait, filtrables, popup nom + adresse +
+  tags + avis. Token en query param (`?t=`) parce que la page est faite pour
+  être mise en favori sur l'iPhone. `make carte` affiche l'URL complète.
+
 ### Store restos — `lib/restos.py` + `data/restos.json`
 Source de vérité unique, partagée par les deux pipelines perso (même schéma,
 même dédup). Un resto : `nom, adresse, quartier, statut (a_faire|fait), tags,
-note, avis, ajoute_le, fait_le`. Écritures sous verrou `fcntl` + `os.replace`,
-car le bot et le serveur sont deux process distincts.
+note, avis, ajoute_le, fait_le, lat, lon`. Écritures sous verrou `fcntl` +
+`os.replace`, car le bot et le serveur sont deux process distincts.
 
 > `data/restos.md` (ancienne liste plate) a été **remplacé** par `restos.json`.
-- **STUB :** `lib/gcal.py` (Google Calendar) lève `NotImplementedError`. Une
-  réservation détectée renvoie juste l'info par notif pour ajout manuel.
-- **Pas encore fait :** le **raccourci iOS** (le flux marche, il manque juste le
-  déclencheur "Partager vers" sur les 2 iPhones à la place du `curl`).
 
 ---
 
@@ -102,10 +118,10 @@ car le bot et le serveur sont deux process distincts.
 ```
 ia-orchestrator/
 ├── README.md
-├── .gitignore                 # .env*, state/*.db, state/incoming/, gcal creds
+├── .gitignore                 # .env*, state/, verrous data/
 ├── .env / .env.example        # .env NON versionné (chmod 600)
 ├── bot.py                     # routeur Discord (mention → pipeline mappé par nom de canal)
-├── server.py                  # endpoint Flask /upload + /health (port 5000)
+├── server.py                  # endpoint Flask /upload + /carte + /health (port 5000)
 ├── pipelines/
 │   ├── dev_jira.py            # ✅ idée → brouillon ticket
 │   ├── perso_resto.py         # ✅ image → store restos / (stub) réservation
@@ -114,6 +130,8 @@ ia-orchestrator/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
 │   ├── restos.py              # store restos (JSON, verrou, dédup, filtres)
+│   ├── geo.py                 # géocodage Nominatim (best-effort) + backfill
+│   ├── carte.py               # page Leaflet générée depuis le store
 │   └── gcal.py                # ⚠️ STUB Google Calendar
 ├── data/
 │   └── restos.json            # liste restos (versionnée, écrite par les 2 services)

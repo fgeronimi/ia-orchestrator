@@ -13,7 +13,7 @@ SERVICES := orchestrator-bot orchestrator-server
 HORODATAGE := $(shell date +%Y%m%d-%H%M%S)
 
 .DEFAULT_GOAL := help
-.PHONY: help sync pull push restart status logs test install-timer \
+.PHONY: help sync pull push restart status logs test install-timer geocode carte \
         deploy remote-logs remote-status env-pull env-push env-diff
 
 help: ## Affiche cette aide
@@ -54,6 +54,12 @@ test: ## Vérifie que les modules importent et que le store répond
 	@$(PYTHON) -c "from lib import restos; \
 		l = restos.charger(); \
 		print(f'store OK : {len(l)} restos, {sum(1 for r in l if r[\"statut\"]==\"a_faire\")} à faire')"
+
+geocode: ## Complète les coordonnées manquantes (Nominatim, 1 req/s)
+	@$(PYTHON) -m lib.geo
+
+carte: ## Affiche l'URL de la carte (token lu dans .env)
+	@echo "http://$(PI):5000/carte?t=$$(grep '^IOS_SHORTCUT_TOKEN=' .env | cut -d= -f2)"
 
 install-timer: ## Installe le timer de synchronisation git (toutes les 10 min)
 	@sudo cp infra/systemd/orchestrator-sync.service infra/systemd/orchestrator-sync.timer \
