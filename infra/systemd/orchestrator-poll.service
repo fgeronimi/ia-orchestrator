@@ -13,7 +13,9 @@ Type=oneshot
 User=fgeronimi
 WorkingDirectory=/home/fgeronimi/ia-orchestrator
 EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+# node en dur (nvm absent du contexte systemd) : l'exécutant appelle `claude`.
+# Ajuster si la version de Node change (ls ~/.nvm/versions/node/).
+Environment=PATH=/home/fgeronimi/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/bin/bash /home/fgeronimi/ia-orchestrator/infra/poll.sh
 
-# Pas besoin de node ici (poll.py = python pur). PrivateTmp par prudence.
 PrivateTmp=true
