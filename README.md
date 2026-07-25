@@ -1,64 +1,165 @@
 # ia-orchestrator
 
-Orchestrateur d'agents Claude Code sur Raspberry Pi (ou VPS). Tu crées des
-tickets dans **GitHub**, le Pi les implémente, ouvre des PR, se relit, et gère
-la suite après ton merge. Notifications sur Discord.
+[![CI](https://github.com/fgeronimi/ia-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/fgeronimi/ia-orchestrator/actions/workflows/ci.yml)
 
-- **Plan du pipeline dev (cap actuel)** : [`docs/plan-orchestrateur-dev.md`](docs/plan-orchestrateur-dev.md)
-- **Architecture & état réel** : [`docs/architecture-mini-serveur-ia.md`](docs/architecture-mini-serveur-ia.md)
+**Un agent de dev autonome sur Raspberry Pi, piloté par GitHub.** Tu écris un
+ticket, tu poses le label `ai-ready` — le Pi le développe, ouvre une PR draft,
+relit son propre code, répare sa CI, applique tes commentaires de review, et
+nettoie tout après ton merge. Toi, tu ne fais que deux choses : écrire des
+tickets et merger des PR.
 
-> État : pipeline dev GitHub **complet et autonome (phases 0 à 3)** — un poller
-> (timer 5 min) détecte les issues `ai-ready` des repos surveillés
-> (`data/repos.yaml`), les implémente (PR draft + auto-review), révise sur tes
-> commentaires, surveille la CI, et nettoie après ton merge. Discord sert aux
-> notifications ; l'infra (auto-update, services systemd) est en place.
+```
+issue + ai-ready ──▶ code ──▶ PR draft + auto-review ──▶ [TOI: review/merge] ──▶ cleanup
+                                   ▲        │
+                                   └────────┘  révisions & réparations CI, en boucle
+```
 
-## Démarrage rapide (Pi ou VPS Debian)
+## Comment ça marche
+
+Un timer systemd fait tourner un poller toutes les 5 minutes. À chaque tour,
+pour chaque repo surveillé : notification des nouveaux tickets, nettoyage des
+PR mergées, suivi de la CI — puis **une seule action lourde** (un appel à
+Claude Code), par priorité :
+
+1. **Réviser** — tu as commenté une PR d'agent ? Claude applique tes retours et repushe.
+2. **Réparer** — la CI d'une PR d'agent est rouge ? Claude lit le log du job et corrige (2 tentatives max, puis il te passe la main).
+3. **Développer** — un ticket `ai-ready` attend ? Claude clone, code, teste, ouvre la PR draft et poste une auto-review sans complaisance sur son propre diff.
+
+L'état vit dans les **labels GitHub** de l'issue :
+
+```
+[toi] issue + label  ai-ready
+        │  (poll détecte)
+        ▼
+  ai-working ── l'agent code, teste, ouvre la PR draft + auto-review → notif
+        │         ├──▶ tu commentes → il révise et repushe    (en boucle)
+        │         └──▶ CI rouge     → il répare et repushe    (2 essais max)
+        ▼
+ [TOI] merge de la PR
+        │  (poll détecte)
+        ▼
+  cleanup ── branche ai/* supprimée, labels retirés, issue close → notif ✅
+```
+
+- `ai-failed` : échec dur, l'agent te passe la main (remets `ai-ready` pour relancer).
+- Quota Claude épuisé ≠ échec : le ticket repasse en file tout seul et le
+  poller attend l'heure de reprise sans spammer.
+
+## Fonctionnalités
+
+- **Exécution de tickets** : workspace cloné, branche `ai/<n>`, auto-détection
+  des tests, commit + push, PR draft (réutilisée si déjà ouverte), commentaire
+  sur l'issue.
+- **Auto-review** : Claude relit son propre diff (outil `Read` seul) avec la
+  grille senior de `.claude/skills/bakaa-brutal-reviewer` et la poste en
+  commentaire de PR.
+- **Boucle de révision** : tes commentaires (conversation ou diff) déclenchent
+  une révision ; ceux de l'orchestrateur (préfixe 🤖) sont ignorés.
+- **CI intégrée** : GitHub Actions (`make test`) sur chaque PR et sur `main` ;
+  résultat notifié par sha ; CI rouge réparée automatiquement.
+- **Multi-repos** : liste dans `data/repos.yaml`, un PAT scopé sur chacun.
+- **Conso tracée par ticket** : tokens et coût estimé de chaque appel Claude,
+  par étape (`implementation`, `auto-review`, `revision`, `ci-fix`).
+- **Notifications Discord** à chaque étape (🎫 🔨 🔍 ✏️ 🔧 ✅ 🧹 ⚠️ ⏳ 🚨), et un
+  bot interrogeable : `@bot conso`, `@bot statut`.
+- **Robustesse** : quota d'abonnement géré (remise en file + reprise), échecs
+  durs visibles (`ai-failed`), crash du poller notifié (`OnFailure=`),
+  verrou anti-concurrence libéré même après un kill.
+
+## Architecture
+
+```
+poll.py                    # un tour : notifs + followup + CI, puis 1 action lourde (verrou)
+pipelines/
+├── dev_executor.py        # exécute, révise, répare la CI (les appels Claude)
+├── dev_followup.py        # suivi léger : nettoyage post-merge, CI (notif + détection)
+└── dev_statut.py          # @bot conso / statut depuis Discord
+lib/
+├── claude.py              # wrapper claude -p (JSON : texte + tokens + coût, quota détecté)
+├── github.py              # API GitHub (issues, PR, labels, check runs, logs de jobs)
+├── workspace.py           # clones locaux : branche, commit, push (token jamais persisté)
+├── state.py               # idempotence SQLite (notifs, PR, commentaires, CI, conso, quota)
+└── notify.py              # notifs : bot Discord si dispo, sinon webhook
+bot.py / server.py         # bot Discord (notifs + statut) / HTTP (/health, /conso)
+infra/                     # setup idempotent, systemd (timers poll + sync, OnFailure), sync auto
+data/repos.yaml            # repos surveillés
+```
+
+Principes : **Discord/HTTP = bus d'événements** (zéro logique métier dans
+`bot.py`/`server.py`), un pipeline = un fichier, tout appel Claude via
+`lib/claude.run_claude()` avec des droits scopés (`allowed_tools`), toute
+notif via `lib/notify.notify()`, cloisonnement par tokens.
+
+Docs détaillées :
+[`docs/architecture-mini-serveur-ia.md`](docs/architecture-mini-serveur-ia.md)
+(environnement, exploitation, état réel) ·
+[`docs/plan-orchestrateur-dev.md`](docs/plan-orchestrateur-dev.md)
+(décisions, phases, implémentation) · [`CLAUDE.md`](CLAUDE.md) (règles pour
+les sessions Claude Code).
+
+## Installation (Pi ou VPS Debian)
 
 ```bash
-bash infra/setup.sh                         # install idempotente
-cp .env.example .env && chmod 600 .env      # puis remplir les secrets
+bash infra/setup.sh                         # système, node/nvm, Claude Code, venv (idempotent)
+cp .env.example .env && chmod 600 .env      # puis remplir les secrets (voir Configuration)
 sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now orchestrator-bot orchestrator-server
-make install-timer                          # auto-update git toutes les 10 min
+make install-timer                          # timers : poller (5 min) + auto-update (10 min)
 ```
 
-## Exploitation
+Côté GitHub, une fois par repo surveillé :
+- créer les labels `ai-ready`, `ai-working`, `ai-failed` ;
+- un **PAT fine-grained** scopé au repo : Contents, Pull requests, Issues en
+  write (+ Actions en read pour les logs de CI) ;
+- protéger `main` (l'agent ne pousse que sur `ai/*`, mais ceinture et bretelles).
 
-Tout passe par le `Makefile` — `make` seul liste les cibles (sur le Pi vs depuis
-le Mac). Les plus courantes :
+## Configuration
+
+| Clé `.env` | Rôle |
+|---|---|
+| `GITHUB_TOKEN` | PAT scopé aux repos surveillés (voir ci-dessus) |
+| `WATCHED_REPO` | repo surveillé — secours si `data/repos.yaml` absent |
+| `CLAUDE_CODE_OAUTH_TOKEN` | auth Claude Code (abonnement, via `claude setup-token`) |
+| `DISCORD_BOT_TOKEN` | bot Discord (notifs + `@bot conso/statut`) |
+| `DISCORD_WEBHOOK_URL` | notifs des process hors-bot (poller, timers) → `#orchestrateur` |
+| `NOTIFY_CHANNEL_ID` | canal de notif du bot |
+
+Repos surveillés (`data/repos.yaml`) :
+
+```yaml
+repos:
+  - fgeronimi/ia-orchestrator
+```
+
+## Au quotidien
 
 ```bash
-make deploy          # (Mac) push le code + met le Pi à jour
-make remote-logs     # (Mac) suit les logs du Pi
-make env-push        # (Mac) envoie le .env local vers le Pi et redémarre les services
-make status / logs   # (Pi) état et logs des services
-make install-timer   # (Pi) installe les timers auto-update + poller GitHub
+make                 # liste toutes les cibles (Pi vs Mac)
+make deploy          # (Mac) push + mise à jour du Pi
+make remote-poll     # (Mac) déclenche un tour de poll (⚠️ peut exécuter un ticket)
+make remote-conso    # (Mac) conso Claude par ticket (tokens, coût)
+make remote-logs     # (Mac) logs du Pi en continu
+make conso / poll    # (Pi) équivalents locaux
 ```
 
-Le poller GitHub tourne toutes les 5 min (`orchestrator-poll.timer` → `poll.py`) :
-il notifie sur Discord les issues taggées `ai-ready`. Suivi :
-`journalctl -u orchestrator-poll -f`.
+Depuis Discord (`#orchestrateur`) : `@bot statut` (tickets en file / en cours /
+en échec, PR ouvertes), `@bot conso` (tableau par ticket). En HTTP :
+`GET /health`, `GET /conso` (port 5000, non exposé sur internet).
 
-Le Pi se met à jour tout seul : un push sur `main` est récupéré et les services
-redémarrés dans les 10 min (`infra/sync.sh` + `orchestrator-sync.timer`).
+Le Pi s'auto-entretient : un push sur `main` est récupéré et les services
+redémarrés dans les 10 minutes ; le poller notifie tout ce qu'il fait dans
+`#orchestrateur` ; un crash du poller envoie un 🚨.
 
-La conso Claude (tokens, coût estimé) est tracée par ticket ; consultable avec
-`make conso` (sur le Pi) ou `make remote-conso` (depuis le Mac).
+## Garde-fous
 
-## Cycle de vie d'un ticket
-
-État porté par les labels GitHub de l'issue : `ai-ready` (toi, déclencheur) →
-`ai-working` (l'agent code et teste, PR draft ouverte + auto-review en
-commentaire, notif Discord ; boucle tant que tu commentes) → merge humain de
-la PR → post-merge (retrait du label `ai-working`, cleanup de la branche).
-Détails : [`docs/plan-orchestrateur-dev.md`](docs/plan-orchestrateur-dev.md#3-cycle-de-vie-dun-ticket-état-porté-par-les-labels-github).
-
-## Conventions
-
-- **Un pipeline = un fichier** dans `pipelines/`, point d'entrée `async def handle(...)`.
-- **Tout appel à Claude** passe par `lib/claude.run_claude()` (`allowed_tools` scope les droits).
-- **Toute notif** passe par `lib/notify.notify()`.
-- **Secrets** via `.env` uniquement, jamais commités.
-- Détails et règles d'or : [`CLAUDE.md`](CLAUDE.md).
+- **Rien n'atteint `main` sans toi** : PR draft systématique, merge humain.
+- L'agent ne pousse que sur des branches `ai/*` ; le PAT est scopé par repo,
+  jamais admin ; le token n'est ni persisté dans les remotes git ni loggué.
+- Appels Claude bornés (timeout 600 s) et scopés par `allowed_tools`
+  (l'auto-review n'a que `Read`).
+- CI rouge : 2 tentatives de réparation max, ensuite intervention humaine.
+- Quota d'abonnement épuisé : remise en file automatique, reprise à l'heure
+  annoncée, une seule notif.
+- Conso visible partout (notifs, `make conso`, `/conso`, `@bot conso`) — pas
+  de coût silencieux.
