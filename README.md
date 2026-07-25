@@ -43,6 +43,14 @@ il notifie sur Discord les issues taggées `ai-ready`. Suivi :
 Le Pi se met à jour tout seul : un push sur `main` est récupéré et les services
 redémarrés dans les 10 min (`infra/sync.sh` + `orchestrator-sync.timer`).
 
+## Cycle de vie d'un ticket
+
+État porté par les labels GitHub de l'issue : `ai-ready` (toi, déclencheur) →
+`ai-working` (l'agent code et teste, PR draft ouverte + auto-review en
+commentaire, notif Discord ; boucle tant que tu commentes) → merge humain de
+la PR → post-merge (retrait du label `ai-working`, cleanup de la branche).
+Détails : [`docs/plan-orchestrateur-dev.md`](docs/plan-orchestrateur-dev.md#3-cycle-de-vie-dun-ticket-état-porté-par-les-labels-github).
+
 ## Conventions
 
 - **Un pipeline = un fichier** dans `pipelines/`, point d'entrée `async def handle(...)`.
