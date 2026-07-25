@@ -150,6 +150,25 @@ def list_pulls(repo: str, state: str = "open") -> list[dict]:
     ]
 
 
+def get_pull(repo: str, numero: int) -> dict:
+    """Détail d'une PR — seul cet endpoint expose `mergeable`.
+
+    `mergeable` vaut None pendant que GitHub calcule (réessayer au tour
+    suivant), True si le merge est propre, False en cas de conflit.
+    """
+    p = _get(f"/repos/{repo}/pulls/{numero}")
+    return {
+        "number": p["number"],
+        "title": p["title"],
+        "head": p["head"]["ref"],
+        "base": p["base"]["ref"],
+        "sha": p["head"]["sha"],
+        "head_repo": (p["head"]["repo"] or {}).get("full_name"),
+        "mergeable": p["mergeable"],
+        "html_url": p["html_url"],
+    }
+
+
 def list_check_runs(repo: str, ref: str) -> list[dict]:
     """Check runs (GitHub Actions & co) d'un commit. Vide si pas de CI."""
     brut = _get(f"/repos/{repo}/commits/{ref}/check-runs", {"per_page": 100})

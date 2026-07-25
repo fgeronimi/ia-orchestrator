@@ -344,6 +344,95 @@ async def reviewer_pr(repo: str, pr: dict) -> None:
         github.remove_label(repo, num, LABEL_REVIEW)
 
 
+# --- Résolution de conflits de merge ----------------------------------------
+
+PROMPT_CONFLIT = """Tu es dans un dépôt git EN PLEIN MERGE de `{base}` dans la
+branche de la PR #{pr} (ticket #{n} : {titre}). Des marqueurs de conflit
+(<<<<<<< ======= >>>>>>>) sont présents dans :
+
+{fichiers}
+
+Résous chaque conflit SÉMANTIQUEMENT : les changements des deux côtés doivent
+coexister quand c'est possible (souvent deux fonctionnalités indépendantes qui
+fusionnent) — ne jette le travail d'aucun côté sans raison.
+
+Consignes :
+- Retire tous les marqueurs de conflit.
+- Si le repo a des tests/lint (lis CLAUDE.md et/ou README), lance-les et
+  assure-toi qu'ils passent.
+- Ne touche pas à git (pas d'add/commit/push/merge --abort) : l'orchestrateur
+  finalise le merge.
+- Termine par un résumé de 2-3 lignes de tes choix de résolution."""
+
+
+async def resoudre_conflit(repo: str, pr: dict, timeout: int | None = None) -> None:
+    """Résout le conflit d'une PR d'agent avec sa base et repush.
+
+    Merge de la base dans la branche : propre → push direct (pas de Claude) ;
+    conflits → Claude les résout, on vérifie qu'aucun marqueur ne survit avant
+    de committer le merge. Échec → merge abandonné (branche intacte), sha
+    marqué (une tentative), intervention humaine notifiée.
+    """
+    num_pr = pr["number"]
+    branche = pr["head"]
+    n = int(branche.removeprefix(BRANCHE_PREFIX))
+
+    try:
+        base = pr["base"]
+        path = workspace.preparer(repo, base)
+        workspace.basculer_sur(path, repo, branche)
+
+        if workspace.merger_base(path, base):
+            # Le conflit s'est résorbé tout seul (main a encore bougé) : push.
+            workspace.pousser(path, repo, branche)
+            await notify.notify(f"🔀 PR #{num_pr} : plus de conflit, branche mise à niveau")
+            return
+
+        fichiers = workspace.fichiers_en_conflit(path)
+        await notify.notify(f"🔀 PR #{num_pr} : conflit avec {base} "
+                            f"({len(fichiers)} fichier(s)), résolution par Claude…")
+        resultat = await run_claude(
+            PROMPT_CONFLIT.format(base=base, pr=num_pr, n=n, titre=pr["title"],
+                                  fichiers="\n".join(f"- {f}" for f in fichiers)),
+            cwd=str(path),
+            allowed_tools=["Read", "Edit", "Write", "Bash"],
+            timeout=timeout or 600,
+        )
+        conso = _tracer_conso(repo, n, "conflit", resultat)
+
+        restants = workspace.marqueurs_restants(path, fichiers)
+        if restants:
+            workspace.abandonner_merge(path)
+            state.marquer_conflit_tente(repo, pr["sha"])
+            await notify.notify(f"🛑 PR #{num_pr} : marqueurs de conflit restants dans "
+                                f"{', '.join(restants)} — merge abandonné, résolution humaine requise\n{conso}")
+            return
+
+        workspace.commit_tout(path, f"ai: #{n} résout le conflit avec {base} (PR #{num_pr})")
+        workspace.pousser(path, repo, branche)
+        state.marquer_conflit_tente(repo, pr["sha"])
+        github.comment_issue(repo, num_pr,
+                             f"🤖 Conflit avec `{base}` résolu.\n\n{resultat.texte}")
+        await notify.notify(f"🔀 #{n} : conflit résolu, repush (CI relancée) → "
+                            f"{pr['html_url']}\n{conso}")
+
+    except ClaudeQuotaError as exc:
+        # Sha non marqué : la résolution repartira avec le quota.
+        try:
+            workspace.abandonner_merge(path)
+        except Exception:
+            pass
+        reprise = _bloquer_quota(exc)
+        await notify.notify(f"⏳ PR #{num_pr} : {exc} — résolution reportée vers {reprise}")
+    except Exception as exc:
+        try:
+            workspace.abandonner_merge(path)
+        except Exception:
+            pass
+        state.marquer_conflit_tente(repo, pr["sha"])
+        await notify.notify(f"⚠️ PR #{num_pr} : échec de la résolution de conflit — {exc}")
+
+
 # --- Phase 3+ : réparation de CI rouge -------------------------------------
 
 async def corriger_ci(repo: str, pr: dict, echecs: list[dict], log: str,

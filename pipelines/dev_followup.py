@@ -96,6 +96,25 @@ def chercher_review_demandee(repo: str) -> dict | None:
     return None
 
 
+def chercher_conflit(repo: str) -> dict | None:
+    """Première PR d'agent ouverte en conflit avec sa base (non mergeable).
+
+    Arrive quand deux tickets voisins partent du même main et que l'un est
+    mergé avant l'autre. Un sha n'est tenté qu'une fois (state.conflits_tentes,
+    marqué par l'exécutant) ; `mergeable` à None = GitHub calcule encore, on
+    repassera. Jamais les PR de forks.
+    """
+    for pr in github.list_pulls(repo, state="open"):
+        if not pr["head"].startswith(BRANCHE_PREFIX) or pr["head_repo"] != repo:
+            continue
+        if state.conflit_deja_tente(repo, pr["sha"]):
+            continue
+        detail = github.get_pull(repo, pr["number"])
+        if detail["mergeable"] is False:
+            return detail
+    return None
+
+
 def _queue_de_log(brut: str) -> str:
     """Fin du log d'un job, débarrassée des horodatages (économie de tokens)."""
     lignes = [re.sub(r"^\S+Z ", "", l) for l in brut.splitlines()]

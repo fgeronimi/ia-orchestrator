@@ -267,6 +267,16 @@ ticket à la fois.
   Pi (auto-review, Read seul — l'étape la moins gourmande) qui poste le
   commentaire et retire le label. Priorité des actions lourdes : révision >
   review demandée > CI rouge > nouveau ticket. Jamais les PR de forks.
+- **Résolution autonome des conflits** (2026-07-26) : deux tickets voisins
+  partent du même `main`, l'un est mergé avant l'autre → la seconde PR
+  d'agent devient non mergeable. `dev_followup.chercher_conflit()` détecte
+  les PR `ai/*` `mergeable = false` (une tentative par sha,
+  `state.conflits_tentes`) ; `dev_executor.resoudre_conflit()` merge la base
+  dans le workspace : propre → push direct (zéro Claude) ; conflits → Claude
+  résout **sémantiquement** (les deux côtés doivent coexister), vérification
+  qu'aucun marqueur ne survit avant de committer le merge, sinon
+  `merge --abort` (branche intacte) + 🛑 humain. Priorité : révision >
+  review demandée > conflit > CI rouge > ticket. Étape conso `conflit`.
 - **Suivi depuis Discord** (2026-07-25) : `pipelines/dev_statut.py`, branché
   sur le canal `#orchestrateur` (dict `PIPELINES` de `bot.py`) — `@bot conso`
   (tableau par ticket) et `@bot statut` (tickets en file/en cours/en échec,

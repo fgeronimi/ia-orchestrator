@@ -76,6 +76,14 @@ def _connexion() -> sqlite3.Connection:
         "  PRIMARY KEY (repo, sha)"
         ")"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conflits_tentes ("  # shas dont le conflit a été traité
+        "  repo TEXT NOT NULL,"
+        "  sha TEXT NOT NULL,"
+        "  le TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  PRIMARY KEY (repo, sha)"
+        ")"
+    )
     return conn
 
 
@@ -134,6 +142,23 @@ def marquer_ci_fix_tentee(repo: str, sha: str) -> None:
     with _connexion() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO ci_fix_tentees (repo, sha) VALUES (?, ?)",
+            (repo, sha),
+        )
+
+
+def conflit_deja_tente(repo: str, sha: str) -> bool:
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT 1 FROM conflits_tentes WHERE repo = ? AND sha = ?",
+            (repo, sha),
+        )
+        return cur.fetchone() is not None
+
+
+def marquer_conflit_tente(repo: str, sha: str) -> None:
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO conflits_tentes (repo, sha) VALUES (?, ?)",
             (repo, sha),
         )
 

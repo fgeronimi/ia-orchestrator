@@ -84,6 +84,46 @@ def diff_contre(path: Path, base: str) -> str:
     return _git(path, "diff", f"{base}...HEAD")
 
 
+def merger_base(path: Path, base: str) -> bool:
+    """Merge la base (déjà fetchée par preparer) dans la branche courante.
+
+    Retourne True si le merge est propre (commit de merge créé), False si des
+    conflits restent à résoudre (marqueurs en place dans l'arbre de travail).
+    """
+    r = subprocess.run(
+        ["git", "-C", str(path), "-c", f"user.name={BOT_NAME}",
+         "-c", f"user.email={BOT_EMAIL}", "merge", base,
+         "-m", f"ai: merge {base}"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
+        return True
+    if "CONFLICT" in r.stdout + r.stderr:
+        return False
+    raise WorkspaceError(f"git merge : {_scrub(r.stderr).strip()[:300]}")
+
+
+def fichiers_en_conflit(path: Path) -> list[str]:
+    """Fichiers encore en conflit dans un merge en cours."""
+    sortie = _git(path, "diff", "--name-only", "--diff-filter=U")
+    return [f for f in sortie.splitlines() if f]
+
+
+def marqueurs_restants(path: Path, fichiers: list[str]) -> list[str]:
+    """Fichiers de la liste contenant encore des marqueurs de conflit."""
+    restants = []
+    for f in fichiers:
+        contenu = (path / f).read_text(errors="replace") if (path / f).exists() else ""
+        if "<<<<<<< " in contenu or ">>>>>>> " in contenu:
+            restants.append(f)
+    return restants
+
+
+def abandonner_merge(path: Path) -> None:
+    """Abandonne un merge en cours — la branche redevient propre."""
+    _git(path, "merge", "--abort")
+
+
 def pousser(path: Path, repo: str, branche: str) -> None:
     # force : la branche ai/<n> appartient à l'agent, on la réécrit sans risque.
     _git(path, "push", "-f", _url(repo), f"{branche}:{branche}")

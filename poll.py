@@ -11,8 +11,9 @@ puis UNE SEULE action lourde (Claude) tous repos confondus, sous verrou
 fichier, par ordre de priorité :
   1. nouveaux commentaires humains sur une PR d'agent → dev_executor.reviser
   2. PR humaine labellisée `ai-review` → dev_executor.reviewer_pr
-  3. CI rouge réparable sur une PR d'agent → dev_executor.corriger_ci
-  4. première issue `ai-ready` → dev_executor.executer
+  3. PR d'agent en conflit avec sa base → dev_executor.resoudre_conflit
+  4. CI rouge réparable sur une PR d'agent → dev_executor.corriger_ci
+  5. première issue `ai-ready` → dev_executor.executer
 
 Idempotence : l'exécutant pose `ai-working` (et retire `ai-ready`) dès la
 prise en charge ; commentaires, PR mergées et statuts CI traités sont
@@ -115,18 +116,28 @@ async def poll(repos: list[dict]) -> None:
                 review = (entree, trouvee)
                 break
 
+    # À défaut, première PR d'agent en conflit avec sa base.
+    conflit = None
+    if revision is None and review is None:
+        for entree in repos:
+            trouvee = dev_followup.chercher_conflit(entree["repo"])
+            if trouvee is not None:
+                conflit = (entree, trouvee)
+                break
+
     # À défaut, première PR d'agent dont la CI est rouge et réparable.
     ci_rouge = None
-    if revision is None and review is None:
+    if revision is None and review is None and conflit is None:
         for entree in repos:
             trouvee = await dev_followup.chercher_ci_rouge(entree["repo"])
             if trouvee is not None:
                 ci_rouge = (entree, *trouvee)
                 break
 
-    if not a_faire and revision is None and review is None and ci_rouge is None:
+    if (not a_faire and revision is None and review is None
+            and conflit is None and ci_rouge is None):
         print(f"[poll] rien à traiter (ni issue '{LABEL}', ni révision, "
-              "ni review demandée, ni CI rouge)")
+              "ni review demandée, ni conflit, ni CI rouge)")
         return
 
     # --- Une action lourde par tour, sous verrou -----------------------------
@@ -149,6 +160,11 @@ async def poll(repos: list[dict]) -> None:
             entree, pr = review
             print(f"[poll] review demandée sur la PR {entree['repo']}#{pr['number']}")
             await dev_executor.reviewer_pr(entree["repo"], pr)
+        elif conflit is not None:
+            entree, pr = conflit
+            print(f"[poll] résolution du conflit de la PR {entree['repo']}#{pr['number']}")
+            await dev_executor.resoudre_conflit(entree["repo"], pr,
+                                                timeout=entree["timeout"])
         elif ci_rouge is not None:
             entree, pr, echecs, log = ci_rouge
             print(f"[poll] correction CI de la PR {entree['repo']}#{pr['number']}")
