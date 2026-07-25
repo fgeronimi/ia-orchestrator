@@ -10,7 +10,7 @@
 | Phase | État |
 |---|---|
 | **Phase 0** — poller (lecture GitHub → notif Discord, dédup) | ✅ **fait & déployé** |
-| **Phase 1** — l'exécutant (issue → code → PR draft) | 🚧 **en cours** — increment 1a (chemin d'écriture) codé & testé en local, test live en attente du PAT en écriture |
+| **Phase 1** — l'exécutant (issue → code → PR draft) | 🚧 **en cours** — 1a (chemin d'écriture) ✅ + 1b (Claude implémente) ✅ **validés live** ; reste 1c (câblage poller) + auto-review |
 | Phase 2 — suite après merge (déploiement / révision) | ⬜ à venir |
 | Phase 3 — élargissement (multi-repos, CI, garde-fous) | ⬜ à venir |
 
@@ -140,17 +140,23 @@ au début) ; exécution **inline dans le poller avec un verrou** fichier, un
 ticket à la fois.
 
 **Construit incrémentalement :**
-- *1a — chemin d'écriture* ✅ codé, testé en local. `lib/github` (écriture :
-  `get_default_branch`, `add_labels`, `remove_label`, `comment_issue`,
-  `create_pull`), `lib/workspace` (clone/branche/commit/push, token jamais
-  persisté ni loggué), `dev_executor.executer()` qui fait un changement **trivial**
-  (fichier `.ai/ticket-<n>.md`) → branche `ai/<n>` → PR draft → commentaire.
-  Test live en attente d'un **PAT en écriture**. Lancer :
-  `python -m pipelines.dev_executor <repo> <n>`.
-- *1b — Claude* ⬜ : remplacer le changement trivial par
-  `run_claude(cwd=workspace, allowed_tools=["Read","Edit","Write","Bash"])`.
-- *1c — câblage poller* ⬜ : le poller appelle l'exécutant (verrou, 1 ticket/tour)
-  au lieu de juste notifier ; le label `ai-working` sert d'idempotence.
+- *1a — chemin d'écriture* ✅ **validé live**. `lib/github` (écriture :
+  `get_default_branch`, `get_issue`, `add_labels`, `remove_label`,
+  `comment_issue`, `find_open_pull`, `create_pull`), `lib/workspace`
+  (clone/branche/commit/push, token jamais persisté ni loggué),
+  `dev_executor.executer()`.
+- *1b — Claude implémente* ✅ **validé live** : `run_claude(cwd=workspace,
+  allowed_tools=["Read","Edit","Write","Bash"], timeout=600)` implémente le
+  ticket, auto-détecte les tests. Testé sur l'issue #1 → PR #2 réelle (Claude a
+  ajouté `make env-push` au README). PR réutilisée si déjà ouverte.
+  Lancer un ticket à la main : `python -m pipelines.dev_executor <repo> <n>`.
+- *1c — câblage poller* ⬜ **prochaine étape** : le poller appelle l'exécutant
+  (verrou fichier `state/executor.lock`, **1 ticket/tour**) au lieu de juste
+  notifier. Le label `ai-working` sert d'idempotence (l'issue n'est plus
+  `ai-ready` donc pas reprise). Attention : `orchestrator-poll.service` a déjà le
+  PATH node (l'exécutant appelle `claude`).
+- *auto-review* ⬜ : après la PR, Claude relit son propre diff
+  (`allowed_tools=["Read"]`) et poste un commentaire de review sur la PR.
 
 ### Phase 2 — La suite après merge
 - `pipelines/dev_followup.py` : PR mergée → selon `repos.yaml`, déclenche le
