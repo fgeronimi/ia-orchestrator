@@ -37,7 +37,7 @@ def _statut(repo: str) -> str:
             sections.append(f"**{titre}** : " + ", ".join(
                 f"#{i['number']} {i['title']}" for i in issues))
     prs = [p for p in github.list_pulls(repo, state="open")
-           if p["head"].startswith("ai/")]
+           if p["head"].startswith("ai/") and p["head_repo"] == repo]
     if prs:
         sections.append("**🔍 PR d'agent ouvertes** : " + ", ".join(
             f"#{p['number']} ({p['head']})" for p in prs))

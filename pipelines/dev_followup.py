@@ -33,7 +33,9 @@ LOG_MAX = 4_000  # extrait de fin de log passé dans le prompt
 
 async def traiter_merges(repo: str) -> None:
     for pr in github.list_pulls(repo, state="closed"):
-        if not pr["head"].startswith(BRANCHE_PREFIX):
+        # head_repo : jamais les PR de forks (une branche ai/* d'un fork n'est
+        # pas une PR d'agent — sinon on délabelliserait une issue au hasard).
+        if not pr["head"].startswith(BRANCHE_PREFIX) or pr["head_repo"] != repo:
             continue
         if state.pr_deja_suivie(repo, pr["number"]):
             continue
@@ -58,7 +60,7 @@ async def traiter_merges(repo: str) -> None:
 
 async def surveiller_ci(repo: str) -> None:
     for pr in github.list_pulls(repo, state="open"):
-        if not pr["head"].startswith(BRANCHE_PREFIX):
+        if not pr["head"].startswith(BRANCHE_PREFIX) or pr["head_repo"] != repo:
             continue
         if state.ci_deja_notifiee(repo, pr["sha"]):
             continue
@@ -93,7 +95,7 @@ async def chercher_ci_rouge(repo: str):
     le ticket : abandon notifié une fois, intervention humaine.
     """
     for pr in github.list_pulls(repo, state="open"):
-        if not pr["head"].startswith(BRANCHE_PREFIX):
+        if not pr["head"].startswith(BRANCHE_PREFIX) or pr["head_repo"] != repo:
             continue
         try:
             n = int(pr["head"].removeprefix(BRANCHE_PREFIX))

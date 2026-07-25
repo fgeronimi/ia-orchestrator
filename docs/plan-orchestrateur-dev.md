@@ -252,6 +252,15 @@ ticket à la fois.
   `conso_claude`, étape `ci-fix`), ensuite 🛑 intervention humaine (notifié
   une fois). Priorité des actions lourdes du poller : révision > CI rouge >
   nouveau ticket. Un quota épuisé ne consomme pas de tentative.
+- **Prêt pour un repo public** (2026-07-25) : la boucle de révision n'écoute
+  que les commentaires du **propriétaire du repo** (sur un repo public,
+  n'importe qui peut commenter une PR, et un commentaire pilote un agent Bash
+  sur le Pi — injection de prompt = exécution de code) ; et toutes les
+  détections (révision, CI, merges, statut) écartent les **PR de forks**,
+  même si leur branche s'appelle `ai/*` (`head_repo` ≠ repo surveillé).
+  Restent sous contrôle humain : les labels (collaborateurs seuls) — sur un
+  repo public, ne labelliser `ai-ready` que des issues relues (le corps
+  devient un prompt). Historique scanné : aucun secret jamais commité.
 - **Suivi depuis Discord** (2026-07-25) : `pipelines/dev_statut.py`, branché
   sur le canal `#orchestrateur` (dict `PIPELINES` de `bot.py`) — `@bot conso`
   (tableau par ticket) et `@bot statut` (tickets en file/en cours/en échec,

@@ -225,14 +225,18 @@ async def executer(repo: str, issue: dict) -> None:
 # --- Phase 2 : boucle de révision -----------------------------------------
 
 def chercher_revision(repo: str) -> tuple[dict, list[dict]] | None:
-    """Première PR d'agent ouverte ayant de nouveaux commentaires humains.
+    """Première PR d'agent ouverte ayant de nouveaux commentaires du proprio.
 
-    Balaye les PR ouvertes sur une branche ai/*, agrège commentaires de
-    conversation et commentaires de diff, écarte ceux de l'orchestrateur
-    (préfixe 🤖) et ceux déjà traités (state.commentaires_vus).
+    Balaye les PR ouvertes sur une branche ai/* DE CE REPO (jamais un fork),
+    agrège commentaires de conversation et de diff, et n'écoute que le
+    propriétaire du repo : sur un repo public, n'importe qui peut commenter,
+    et un commentaire pilote un agent Bash sur le Pi — seuls les tiens font
+    foi. Écarte aussi ceux de l'orchestrateur (préfixe 🤖, même login) et
+    ceux déjà traités (state.commentaires_vus).
     """
+    proprietaire = repo.split("/")[0]
     for pr in github.list_pulls(repo, state="open"):
-        if not pr["head"].startswith(BRANCHE_PREFIX):
+        if not pr["head"].startswith(BRANCHE_PREFIX) or pr["head_repo"] != repo:
             continue
         commentaires = []
         for genre, liste in (
@@ -241,6 +245,8 @@ def chercher_revision(repo: str) -> tuple[dict, list[dict]] | None:
         ):
             for c in liste:
                 cle = f"{genre}-{c['id']}"  # deux espaces d'ids distincts
+                if c["user"] != proprietaire:
+                    continue
                 if (c["body"] or "").startswith(PREFIX_BOT):
                     continue
                 if state.commentaire_deja_vu(repo, cle):

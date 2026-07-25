@@ -190,6 +190,11 @@ Le ticket qui a ajouté l'endpoint `/conso` de ce repo, déroulé réel :
 ## Garde-fous
 
 - **Rien n'atteint `main` sans toi** : PR draft systématique, merge humain.
+- **Seul le propriétaire du repo pilote l'agent** : les commentaires de tiers
+  sur les PR sont ignorés (un commentaire = des instructions exécutées sur le
+  Pi), et les PR de forks sont invisibles pour l'orchestrateur, même avec une
+  branche nommée `ai/*`. Les labels déclencheurs restent réservés aux
+  collaborateurs (mécanique GitHub).
 - L'agent ne pousse que sur des branches `ai/*` ; le PAT est scopé par repo,
   jamais admin ; le token n'est ni persisté dans les remotes git ni loggué.
 - Appels Claude bornés (timeout 600 s) et scopés par `allowed_tools`

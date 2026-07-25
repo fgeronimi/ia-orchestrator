@@ -138,6 +138,9 @@ def list_pulls(repo: str, state: str = "open") -> list[dict]:
             "title": p["title"],
             "head": p["head"]["ref"],
             "sha": p["head"]["sha"],
+            # Repo d'où vient la branche head (None si fork supprimé) : permet
+            # d'écarter les PR de forks, qui ne sont jamais des PR d'agent.
+            "head_repo": (p["head"]["repo"] or {}).get("full_name"),
             "merged_at": p["merged_at"],
             "html_url": p["html_url"],
         }
