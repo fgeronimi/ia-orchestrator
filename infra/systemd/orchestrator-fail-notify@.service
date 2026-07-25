@@ -1,0 +1,15 @@
+# Notifie Discord quand un service de l'orchestrateur échoue.
+# Unité template : instanciée par OnFailure=orchestrator-fail-notify@%n.service
+# (%i = nom du service en échec). Sans elle, un crash ne se voit que dans
+# journalctl.
+# Installation :  make install-timer
+
+[Unit]
+Description=Orchestrateur IA - notif Discord d'échec de %i
+
+[Service]
+Type=oneshot
+User=fgeronimi
+WorkingDirectory=/home/fgeronimi/ia-orchestrator
+EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+ExecStart=/home/fgeronimi/ia-orchestrator/.venv/bin/python -m lib.notify "🚨 service %i en échec — voir : journalctl -u %i -n 50"

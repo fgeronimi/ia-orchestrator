@@ -104,6 +104,8 @@ en base.
 
 - `ai-working` empêche un second tour de polling de reprendre un ticket en cours.
   (Pas de label `ai-review` distinct : la PR draft s'ouvre sous `ai-working`.)
+- `ai-failed` = échec dur, en attente d'humain (remettre `ai-ready` relance).
+  Quota épuisé ≠ échec : le ticket repasse en `ai-ready` tout seul.
 - La SQLite dédoublonne les commentaires (un `comment_id` ne se rejoue pas) et
   les PR mergées déjà nettoyées.
 - L'agent ne pousse que sur des branches `ai/*`, jamais sur `main`.
@@ -225,10 +227,35 @@ ticket à la fois.
   notifs/followup/CI mais saute les actions lourdes jusqu'à la reprise — une
   seule notif ⏳, pas de spam toutes les 5 min.
 - **Conso de tokens par ticket** : chaque appel Claude (étapes
-  `implementation`, `auto-review`, `revision`) est tracé dans SQLite
+  `implementation`, `auto-review`, `revision`, `ci-fix`) est tracé dans SQLite
   (`conso_claude` : tokens entrée/cache/sortie + coût estimé du CLI). Les
-  notifs Discord de chaque étape portent un résumé 🪙 ; `make conso` (Pi) ou
-  `make remote-conso` (Mac) affichent le tableau agrégé par ticket.
+  notifs Discord de chaque étape portent un résumé 🪙 ; `make conso` (Pi),
+  `make remote-conso` (Mac) ou `@bot conso` (Discord) affichent le tableau
+  agrégé par ticket.
+- **Échec dur d'un ticket → label `ai-failed`** (2026-07-25) : l'exécutant
+  pose `ai-failed` (retire `ai-working`) et notifie ⚠️ — état visible dans
+  GitHub, pas de retry auto (un échec déterministe bouclerait). Remettre
+  `ai-ready` relance (l'exécutant retire `ai-failed` à la prise en charge).
+  Une révision en échec dur marque ses commentaires vus (sinon elle serait
+  relancée tous les 5 min) : re-commenter la PR pour retenter.
+- **Crash du poller → notif Discord** (2026-07-25) : unité template
+  `orchestrator-fail-notify@.service` branchée en `OnFailure=` sur
+  `orchestrator-poll` — un tour qui crashe (hors cas gérés : quota, échec
+  ticket) envoie 🚨 sur Discord au lieu de mourir en silence dans journalctl.
+- **CI rouge → correction automatique** (2026-07-25) :
+  `dev_followup.chercher_ci_rouge()` détecte la première PR d'agent dont la
+  CI est rouge (jamais deux fois le même sha — `state.ci_fix_tentees`) ;
+  `dev_executor.corriger_ci()` récupère la fin du log du job en échec
+  (l'id de check run Actions = id de job), la donne en prompt à Claude sur la
+  branche de la PR, commit `ai: #n répare la CI`, repush (nouveau sha →
+  nouveau cycle CI surveillé). **Max 2 tentatives par ticket** (comptées via
+  `conso_claude`, étape `ci-fix`), ensuite 🛑 intervention humaine (notifié
+  une fois). Priorité des actions lourdes du poller : révision > CI rouge >
+  nouveau ticket. Un quota épuisé ne consomme pas de tentative.
+- **Suivi depuis Discord** (2026-07-25) : `pipelines/dev_statut.py`, branché
+  sur le canal `#orchestrateur` (dict `PIPELINES` de `bot.py`) — `@bot conso`
+  (tableau par ticket) et `@bot statut` (tickets en file/en cours/en échec,
+  PR d'agent ouvertes). Lecture seule, aucun appel Claude.
 
 ---
 

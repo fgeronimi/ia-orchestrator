@@ -68,6 +68,14 @@ def _connexion() -> sqlite3.Connection:
         "  valeur TEXT NOT NULL"
         ")"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ci_fix_tentees ("  # shas dont la CI rouge a été traitée
+        "  repo TEXT NOT NULL,"
+        "  sha TEXT NOT NULL,"
+        "  le TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  PRIMARY KEY (repo, sha)"
+        ")"
+    )
     return conn
 
 
@@ -98,6 +106,46 @@ def enregistrer_conso(repo: str, numero: int, etape: str,
             "  VALUES (?, ?, ?, ?, ?, ?, ?)",
             (repo, numero, etape, entree, cache, sortie, cout),
         )
+
+
+def conso_par_ticket(limite: int = 15) -> list[tuple]:
+    """Conso agrégée par ticket, du plus récent au plus ancien :
+    (ticket, appels, tokens lus, tokens générés, coût $)."""
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT repo || '#' || numero, COUNT(*),"
+            "       SUM(tokens_entree + tokens_cache), SUM(tokens_sortie), SUM(cout_usd)"
+            "  FROM conso_claude GROUP BY repo, numero ORDER BY MAX(le) DESC LIMIT ?",
+            (limite,),
+        )
+        return cur.fetchall()
+
+
+def ci_fix_deja_tentee(repo: str, sha: str) -> bool:
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT 1 FROM ci_fix_tentees WHERE repo = ? AND sha = ?",
+            (repo, sha),
+        )
+        return cur.fetchone() is not None
+
+
+def marquer_ci_fix_tentee(repo: str, sha: str) -> None:
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO ci_fix_tentees (repo, sha) VALUES (?, ?)",
+            (repo, sha),
+        )
+
+
+def compter_conso(repo: str, numero: int, etape: str) -> int:
+    """Nombre d'appels Claude déjà tracés pour ce ticket et cette étape."""
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM conso_claude WHERE repo = ? AND numero = ? AND etape = ?",
+            (repo, numero, etape),
+        )
+        return cur.fetchone()[0]
 
 
 def bloquer_quota(jusqua_epoch: int) -> None:

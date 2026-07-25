@@ -15,6 +15,7 @@ import discord
 from dotenv import load_dotenv
 
 from lib import notify
+from pipelines import dev_statut
 
 load_dotenv()
 
@@ -24,9 +25,11 @@ NOTIFY_CHANNEL_ID = int(os.environ.get("NOTIFY_CHANNEL_ID", "0"))
 
 # Mapping canal → handler de pipeline.
 # Chaque handler : async def handle(text: str, message) -> str
-# Vide depuis le pivot GitHub (les tickets naissent dans GitHub, pas sur
-# Discord) : le bot ne sert plus qu'aux notifications via lib/notify.
-PIPELINES = {}
+# Les tickets naissent dans GitHub (pivot 2026-07-25) ; côté Discord, le bot
+# notifie (lib/notify) et répond aux requêtes de suivi dans #orchestrateur.
+PIPELINES = {
+    "orchestrateur": dev_statut.handle,  # @bot conso / statut
+}
 
 intents = discord.Intents.default()
 intents.message_content = True

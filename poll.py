@@ -8,9 +8,10 @@ Un tour, pour CHAQUE repo :
   2. suite après merge : nettoie les PR d'agent mergées (dev_followup, léger)
   3. CI : notifie le résultat des check runs des PR d'agent (une fois par sha)
 puis UNE SEULE action lourde (Claude) tous repos confondus, sous verrou
-fichier, révision prioritaire :
-  - nouveaux commentaires humains sur une PR d'agent → dev_executor.reviser
-  - sinon première issue `ai-ready` → dev_executor.executer
+fichier, par ordre de priorité :
+  1. nouveaux commentaires humains sur une PR d'agent → dev_executor.reviser
+  2. CI rouge réparable sur une PR d'agent → dev_executor.corriger_ci
+  3. première issue `ai-ready` → dev_executor.executer
 
 Idempotence : l'exécutant pose `ai-working` (et retire `ai-ready`) dès la
 prise en charge ; commentaires, PR mergées et statuts CI traités sont
@@ -91,8 +92,17 @@ async def poll(repos: list[str]) -> None:
             revision = (repo, *trouvee)
             break
 
-    if not a_faire and revision is None:
-        print(f"[poll] rien à traiter (ni issue '{LABEL}', ni révision)")
+    # À défaut, première PR d'agent dont la CI est rouge et réparable.
+    ci_rouge = None
+    if revision is None:
+        for repo in repos:
+            trouvee = await dev_followup.chercher_ci_rouge(repo)
+            if trouvee is not None:
+                ci_rouge = (repo, *trouvee)
+                break
+
+    if not a_faire and revision is None and ci_rouge is None:
+        print(f"[poll] rien à traiter (ni issue '{LABEL}', ni révision, ni CI rouge)")
         return
 
     # --- Une action lourde par tour, sous verrou -----------------------------
@@ -103,13 +113,17 @@ async def poll(repos: list[str]) -> None:
         except BlockingIOError:
             print("[poll] exécutant déjà en cours (verrou pris), on repassera")
             return
-        # Révision prioritaire : débloquer une review en cours passe avant
-        # entamer un nouveau ticket.
+        # Priorité : révision (débloquer ta review) > CI rouge (réparer
+        # l'existant) > nouveau ticket.
         if revision is not None:
             repo, pr, commentaires = revision
             print(f"[poll] révision de la PR {repo}#{pr['number']} "
                   f"({len(commentaires)} commentaire(s))")
             await dev_executor.reviser(repo, pr, commentaires)
+        elif ci_rouge is not None:
+            repo, pr, echecs, log = ci_rouge
+            print(f"[poll] correction CI de la PR {repo}#{pr['number']}")
+            await dev_executor.corriger_ci(repo, pr, echecs, log)
         else:
             repo, issue = a_faire[0]
             print(f"[poll] exécution de {repo}#{issue['number']} {issue['title']}")

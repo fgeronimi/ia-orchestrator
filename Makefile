@@ -56,7 +56,7 @@ logs: ## Suit les logs des deux services (Ctrl-C pour sortir)
 
 test: ## Vérifie que les modules importent
 	@$(PYTHON) -c "import bot, server, poll, pipelines.dev_executor, \
-		pipelines.dev_followup, lib.claude, lib.github, \
+		pipelines.dev_followup, pipelines.dev_statut, lib.claude, lib.github, \
 		lib.notify, lib.state, lib.workspace" && echo "imports OK"
 
 poll: ## Lance un tour du poller GitHub (WATCHED_REPO du .env) ; peut déclencher l'exécution réelle d'un ticket ai-ready
