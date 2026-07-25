@@ -80,12 +80,10 @@ phases 0→3, implémentation actuelle).
   surveillance des PR d'agent (`dev_followup.surveiller_ci`, notif ✅/❌ une
   fois par sha, repush → nouveau suivi). Validé sur la PR #8.
 
-### `pipelines/dev_jira.py` — ⚠️ legacy, à retirer/recycler
-Pipeline Discord « idée → brouillon de ticket » (Claude reformule une idée en
-titre/description/critères). Antérieur au pivot : comme les tickets viennent
-désormais **directement de GitHub**, ce flux n'est plus le point d'entrée. À
-supprimer, ou à recycler en « idée Discord → issue GitHub créée ». Discord garde
-son rôle de **notifications** (`lib/notify`).
+> `pipelines/dev_jira.py` (idée Discord → brouillon de ticket, antérieur au
+> pivot) a été retiré le 2026-07-25 — récupérable dans l'historique git.
+> `PIPELINES` de `bot.py` est vide : Discord ne sert plus qu'aux
+> **notifications** (`lib/notify`).
 
 ---
 
@@ -96,15 +94,14 @@ ia-orchestrator/
 ├── README.md
 ├── .gitignore                 # .env*, state/
 ├── .env / .env.example        # .env NON versionné (chmod 600)
-├── bot.py                     # routeur Discord (mention → pipeline mappé par nom de canal)
+├── bot.py                     # routeur Discord (PIPELINES vide depuis le pivot : notifs seulement)
 ├── server.py                  # endpoint Flask /health (port 5000)
 ├── poll.py                    # ✅ poller multi-repos : notifs + followup + CI + 1 action lourde/tour
 ├── data/
 │   └── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
 ├── pipelines/
 │   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR draft + auto-review + révision
-│   ├── dev_followup.py        # ✅ suite après merge : nettoyage branche/label des PR mergées
-│   └── dev_jira.py            # ⚠️ legacy : idée Discord → brouillon (avant pivot)
+│   └── dev_followup.py        # ✅ suite après merge : nettoyage branche/label des PR mergées
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
