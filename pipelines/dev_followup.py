@@ -13,13 +13,22 @@ surveiller_ci — pour chaque PR d'agent ouverte : notifie le résultat des
 check runs (GitHub Actions) une fois par sha — un repush (nouveau sha)
 relance le suivi. Pas de CI sur le repo → silencieux.
 
-Idempotence : state.prs_suivies / state.ci_notifiee.
+chercher_ci_rouge — détecte la première PR d'agent dont la CI est rouge et
+réparable ; l'exécutant (dev_executor.corriger_ci) tentera de la réparer
+avec le log du job en prompt. Max MAX_TENTATIVES_CI corrections par ticket,
+ensuite abandon notifié (une fois). Un sha déjà traité n'est jamais repris.
+
+Idempotence : state.prs_suivies / state.ci_notifiee / state.ci_fix_tentees.
 """
+
+import re
 
 from lib import github, notify, state
 
 BRANCHE_PREFIX = "ai/"
 LABEL_WORKING = "ai-working"
+MAX_TENTATIVES_CI = 2
+LOG_MAX = 4_000  # extrait de fin de log passé dans le prompt
 
 
 async def traiter_merges(repo: str) -> None:
@@ -68,3 +77,45 @@ async def surveiller_ci(repo: str) -> None:
             await notify.notify(f"✅ CI verte — PR #{pr['number']}")
         print(f"[followup] CI de la PR #{pr['number']} : "
               f"{'rouge' if echecs else 'verte'} ({pr['sha'][:7]})")
+
+
+def _queue_de_log(brut: str) -> str:
+    """Fin du log d'un job, débarrassée des horodatages (économie de tokens)."""
+    lignes = [re.sub(r"^\S+Z ", "", l) for l in brut.splitlines()]
+    return "\n".join(lignes)[-LOG_MAX:]
+
+
+async def chercher_ci_rouge(repo: str):
+    """Première PR d'agent à CI rouge réparable → (pr, echecs, extrait de log).
+
+    Un sha n'est considéré qu'une fois (state.ci_fix_tentees, marqué par
+    l'exécutant après tentative). Au-delà de MAX_TENTATIVES_CI corrections sur
+    le ticket : abandon notifié une fois, intervention humaine.
+    """
+    for pr in github.list_pulls(repo, state="open"):
+        if not pr["head"].startswith(BRANCHE_PREFIX):
+            continue
+        try:
+            n = int(pr["head"].removeprefix(BRANCHE_PREFIX))
+        except ValueError:
+            continue
+        if state.ci_fix_deja_tentee(repo, pr["sha"]):
+            continue
+        runs = github.list_check_runs(repo, pr["sha"])
+        if not runs or any(r["status"] != "completed" for r in runs):
+            continue
+        echecs = [r for r in runs
+                  if r["conclusion"] not in ("success", "neutral", "skipped")]
+        if not echecs:
+            continue
+        if state.compter_conso(repo, n, "ci-fix") >= MAX_TENTATIVES_CI:
+            state.marquer_ci_fix_tentee(repo, pr["sha"])  # ne plus re-notifier
+            await notify.notify(
+                f"🛑 PR #{pr['number']} : CI toujours rouge après "
+                f"{MAX_TENTATIVES_CI} corrections — intervention humaine requise\n"
+                f"{pr['html_url']}"
+            )
+            continue
+        log = _queue_de_log(github.get_job_log(repo, echecs[0]["id"]))
+        return pr, echecs, log
+    return None

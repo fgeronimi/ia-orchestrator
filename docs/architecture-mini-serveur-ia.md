@@ -82,8 +82,9 @@ phases 0→3, implémentation actuelle).
 
 > `pipelines/dev_jira.py` (idée Discord → brouillon de ticket, antérieur au
 > pivot) a été retiré le 2026-07-25 — récupérable dans l'historique git.
-> `PIPELINES` de `bot.py` est vide : Discord ne sert plus qu'aux
-> **notifications** (`lib/notify`).
+> Côté Discord, le bot **notifie** (`lib/notify`) et répond aux requêtes de
+> suivi dans `#orchestrateur` : `@bot conso` / `@bot statut`
+> (`pipelines/dev_statut.py`, lecture seule).
 
 ---
 
@@ -94,14 +95,15 @@ ia-orchestrator/
 ├── README.md
 ├── .gitignore                 # .env*, state/
 ├── .env / .env.example        # .env NON versionné (chmod 600)
-├── bot.py                     # routeur Discord (PIPELINES vide depuis le pivot : notifs seulement)
+├── bot.py                     # routeur Discord (notifs + @bot conso/statut dans #orchestrateur)
 ├── server.py                  # endpoint Flask /health (port 5000)
 ├── poll.py                    # ✅ poller multi-repos : notifs + followup + CI + 1 action lourde/tour
 ├── data/
 │   └── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
 ├── pipelines/
-│   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR draft + auto-review + révision
-│   └── dev_followup.py        # ✅ suite après merge : nettoyage branche/label des PR mergées
+│   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR + auto-review + révision + fix CI
+│   ├── dev_followup.py        # ✅ suivi : nettoyage post-merge, CI (notif + détection rouge)
+│   └── dev_statut.py          # ✅ @bot conso / statut depuis Discord (lecture seule)
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
@@ -118,7 +120,8 @@ ia-orchestrator/
 │       ├── orchestrator-bot.service      # bot.py
 │       ├── orchestrator-server.service   # server.py
 │       ├── orchestrator-sync.{service,timer}   # auto-update git, toutes les 10 min
-│       └── orchestrator-poll.{service,timer}   # poller GitHub, toutes les 5 min
+│       ├── orchestrator-poll.{service,timer}   # poller GitHub, toutes les 5 min
+│       └── orchestrator-fail-notify@.service   # OnFailure → notif Discord 🚨
 └── docs/
     ├── architecture-mini-serveur-ia.md   # ce fichier
     └── plan-orchestrateur-dev.md         # plan + implémentation du pipeline dev GitHub
@@ -207,6 +210,11 @@ rien à faire.
   # /etc/sudoers.d/orchestrator  (via visudo -f)
   fgeronimi ALL=(root) NOPASSWD: /bin/systemctl restart orchestrator-bot orchestrator-server
   ```
+
+**Échec d'un tour de poll :** `orchestrator-poll.service` a
+`OnFailure=orchestrator-fail-notify@%n.service` — un crash non géré envoie
+🚨 sur Discord (les cas prévus — quota, échec d'un ticket — sont notifiés
+plus finement par les pipelines et ne font pas échouer l'unité).
 
 **Services (autonomes, restart auto, survivent au reboot) :**
 ```bash

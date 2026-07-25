@@ -7,6 +7,8 @@
 Description=Orchestrateur IA - poller GitHub (issues ai-ready)
 After=network-online.target
 Wants=network-online.target
+# Un tour qui crashe (hors quota, géré en amont) notifie Discord.
+OnFailure=orchestrator-fail-notify@%n.service
 
 [Service]
 Type=oneshot

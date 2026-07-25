@@ -29,6 +29,7 @@ from lib.claude import ClaudeQuotaError, ResultatClaude, run_claude
 
 LABEL_READY = "ai-ready"
 LABEL_WORKING = "ai-working"
+LABEL_FAILED = "ai-failed"  # échec dur : visible dans GitHub, relance humaine
 BRANCHE_PREFIX = "ai/"
 # Les commentaires de l'orchestrateur partent avec le même PAT que l'humain
 # (même login) : le préfixe 🤖 est ce qui les distingue des vrais retours.
@@ -82,6 +83,24 @@ Consignes :
 - Modifie directement les fichiers du dépôt courant.
 - Reste minimal et scopé aux commentaires. Respecte les conventions du repo.
 - Si tu repères des tests, lance-les et assure-toi qu'ils passent.
+- Ne touche pas à git (pas de commit/push) : l'orchestrateur s'en charge.
+- Termine par un résumé de 2-3 lignes de ce que tu as changé."""
+
+PROMPT_CI = """Tu es dans un dépôt git, sur la branche de la PR #{pr}
+(ticket #{n} : {titre}). La CI de cette PR est en échec ({noms}).
+Répare-la, rien de plus.
+
+Fin du log du job en échec :
+
+```
+{log}
+```
+
+Consignes :
+- Modifie directement les fichiers du dépôt courant.
+- Reste minimal et scopé à la réparation de la CI. Respecte les conventions du repo.
+- Reproduis l'échec en local si possible (mêmes commandes que la CI) et
+  vérifie que c'est réparé.
 - Ne touche pas à git (pas de commit/push) : l'orchestrateur s'en charge.
 - Termine par un résumé de 2-3 lignes de ce que tu as changé."""
 
@@ -144,6 +163,7 @@ async def executer(repo: str, issue: dict) -> None:
         await notify.notify(f"🎫 #{n} pris en charge — {titre}")
         github.add_labels(repo, n, [LABEL_WORKING])
         github.remove_label(repo, n, LABEL_READY)
+        github.remove_label(repo, n, LABEL_FAILED)  # relance après échec
 
         base = github.get_default_branch(repo)
         path = workspace.preparer(repo, base)
@@ -189,8 +209,16 @@ async def executer(repo: str, issue: dict) -> None:
         reprise = _bloquer_quota(exc)
         await notify.notify(f"⏳ #{n} : {exc} — ticket remis en file, reprise vers {reprise}")
     except Exception as exc:
-        await notify.notify(f"⚠️ #{n} : échec de l'exécutant — {exc}")
-        raise
+        # Échec dur : label ai-failed pour l'état visible dans GitHub. Pas de
+        # retry auto (un échec déterministe bouclerait) : remettre ai-ready à
+        # la main pour relancer. Best-effort si c'est GitHub qui est en panne.
+        try:
+            github.add_labels(repo, n, [LABEL_FAILED])
+            github.remove_label(repo, n, LABEL_WORKING)
+        except Exception:
+            pass
+        await notify.notify(f"⚠️ #{n} : échec de l'exécutant — {exc}\n"
+                            f"Label `{LABEL_FAILED}` posé ; remets `{LABEL_READY}` pour retenter.")
 
 
 # --- Phase 2 : boucle de révision -----------------------------------------
@@ -273,8 +301,64 @@ async def reviser(repo: str, pr: dict, commentaires: list[dict]) -> None:
         reprise = _bloquer_quota(exc)
         await notify.notify(f"⏳ PR #{num_pr} : {exc} — révision reportée vers {reprise}")
     except Exception as exc:
-        await notify.notify(f"⚠️ PR #{num_pr} : échec de la révision — {exc}")
-        raise
+        # Échec dur : marquer les commentaires vus, sinon un échec déterministe
+        # relancerait la même révision (10 min de Claude) tous les 5 min.
+        for c in commentaires:
+            state.marquer_commentaire(repo, c["cle"])
+        await notify.notify(f"⚠️ PR #{num_pr} : échec de la révision — {exc}\n"
+                            f"Commentaires abandonnés : re-commente la PR pour retenter.")
+
+
+# --- Phase 3+ : réparation de CI rouge -------------------------------------
+
+async def corriger_ci(repo: str, pr: dict, echecs: list[dict], log: str) -> None:
+    """Tente de réparer la CI rouge d'une PR d'agent (détectée par
+    dev_followup.chercher_ci_rouge) et repush.
+
+    Le sha est marqué traité après la tentative (succès ou échec dur) pour ne
+    jamais boucler dessus ; pas marqué sur un quota épuisé (retenté après la
+    reprise). Un repush crée un nouveau sha → nouveau cycle CI surveillé.
+    """
+    num_pr = pr["number"]
+    branche = pr["head"]
+    n = int(branche.removeprefix(BRANCHE_PREFIX))
+    noms = ", ".join(f"{r['name']} ({r['conclusion']})" for r in echecs)
+
+    try:
+        tentative = state.compter_conso(repo, n, "ci-fix") + 1
+        await notify.notify(f"🔧 PR #{num_pr} : CI rouge ({noms}), "
+                            f"correction par Claude (tentative {tentative})…")
+        base = github.get_default_branch(repo)
+        path = workspace.preparer(repo, base)
+        workspace.basculer_sur(path, repo, branche)
+
+        resultat = await run_claude(
+            PROMPT_CI.format(pr=num_pr, n=n, titre=pr["title"], noms=noms,
+                             log=log or "(log indisponible)"),
+            cwd=str(path),
+            allowed_tools=["Read", "Edit", "Write", "Bash"],
+            timeout=600,
+        )
+        conso = _tracer_conso(repo, n, "ci-fix", resultat)
+
+        if workspace.commit_tout(path, f"ai: #{n} répare la CI (PR #{num_pr})"):
+            workspace.pousser(path, repo, branche)
+            github.comment_issue(repo, num_pr, f"🤖 CI réparée (tentative {tentative}).\n\n{resultat.texte}")
+            await notify.notify(f"🔧 #{n} : correctif CI repushé, CI relancée → "
+                                f"{pr['html_url']}\n{conso}")
+        else:
+            github.comment_issue(repo, num_pr,
+                                 f"🤖 CI rouge analysée mais aucune modification produite.\n\n{resultat.texte}")
+            await notify.notify(f"🤷 #{n} : pas de correctif CI produit (voir la PR)\n{conso}")
+        state.marquer_ci_fix_tentee(repo, pr["sha"])
+
+    except ClaudeQuotaError as exc:
+        # Sha non marqué : la correction repartira avec le quota.
+        reprise = _bloquer_quota(exc)
+        await notify.notify(f"⏳ PR #{num_pr} : {exc} — correction CI reportée vers {reprise}")
+    except Exception as exc:
+        state.marquer_ci_fix_tentee(repo, pr["sha"])
+        await notify.notify(f"⚠️ PR #{num_pr} : échec de la correction CI — {exc}")
 
 
 if __name__ == "__main__":

@@ -80,3 +80,12 @@ journalctl -u <service> -f                    # vérifier les logs
 
 - Répondre et commenter le code en français.
 - Rester minimal : ne pas ajouter de dépendances ou d'abstractions non demandées.
+
+## Skills du projet (`.claude/skills/`)
+
+Importés de `repo-de-skills` (plugin skills-dev) le 2026-07-25, adaptés au projet :
+- **`/brutal-reviewer`** — review senior sans complaisance, à utiliser pour
+  relire un changement de ce repo avant commit important.
+- **`/commit`** — commit au format Conventional Commits, footer `Refs: #<n>`
+  dérivé des branches `ai/<n>`. Les règles « Git & commits » ci-dessus restent
+  prioritaires (identité perso, pas de co-author).
