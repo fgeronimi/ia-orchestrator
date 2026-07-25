@@ -6,8 +6,7 @@
 # Le PAT (GITHUB_TOKEN) doit être scopé sur chaque repo listé.
 repos:
   - fgeronimi/ia-orchestrator
-  # À décommenter une fois le PAT étendu aux repos havre :
-  # - repo: fgeronimi/havre-data
-  #   timeout: 900
-  # - repo: fgeronimi/havre-app
-  #   timeout: 1200       # pnpm install d'un monorepo froid sur le Pi
+  - repo: fgeronimi/havre-data
+    timeout: 900
+  - repo: fgeronimi/havre-app
+    timeout: 1200         # pnpm install d'un monorepo froid sur le Pi
