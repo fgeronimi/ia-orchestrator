@@ -19,7 +19,8 @@ from pipelines import dev_jira
 
 load_dotenv()
 
-TOKEN = os.environ["DISCORD_BOT_TOKEN"]
+# Lu au lancement (bloc __main__), pas à l'import : le module doit rester
+# importable sans .env (make test, CI).
 NOTIFY_CHANNEL_ID = int(os.environ.get("NOTIFY_CHANNEL_ID", "0"))
 
 # Mapping canal → handler de pipeline.
@@ -78,4 +79,4 @@ async def on_message(message: discord.Message):
 
 
 if __name__ == "__main__":
-    client.run(TOKEN)
+    client.run(os.environ["DISCORD_BOT_TOKEN"])
