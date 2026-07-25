@@ -151,6 +151,42 @@ Le Pi s'auto-entretient : un push sur `main` est récupéré et les services
 redémarrés dans les 10 minutes ; le poller notifie tout ce qu'il fait dans
 `#orchestrateur` ; un crash du poller envoie un 🚨.
 
+## Exemple de bout en bout (vécu : issue #11 → PR #12)
+
+Le ticket qui a ajouté l'endpoint `/conso` de ce repo, déroulé réel :
+
+1. **Issue [#11](https://github.com/fgeronimi/ia-orchestrator/issues/11)** créée
+   avec le label `ai-ready` : *« server.py : endpoint /conso (conso Claude par
+   ticket, JSON) — réutiliser `lib.state.conso_par_ticket()`, ne pas dupliquer
+   le SQL, rester dans le style de `/health`. »*
+2. **Tour de poll suivant** — sur Discord, en direct :
+   ```
+   🔔 🎫 #11 pris en charge — server.py : endpoint /conso …
+   🔔 🔨 #11 : implémentation par Claude…
+   🔔 🔍 #11 : PR draft ouverte → …/pull/12
+        🪙 implementation : 266k lus / 1.6k générés (~0.21 $)
+   🔔 🧐 #11 : auto-review postée sur la PR #12
+        🪙 auto-review : 228k lus / 2.6k générés (~0.27 $)
+   ```
+3. **La PR [#12](https://github.com/fgeronimi/ia-orchestrator/pull/12)** : 14
+   lignes, l'endpoint réutilise bien `state.conso_par_ticket()`. L'auto-review
+   (grille `bakaa-brutal-reviewer`) épingle un vrai point — *« Docstring
+   désynchronisée du diff (severity: MEDIUM) : le docstring dit toujours
+   “Réduit à `/health` pour l'instant” »* — et conclut *« ⚠️ un point à
+   vérifier avant merge, le reste est solide »*.
+4. **Merge humain** (seule intervention manuelle du déroulé, avec l'écriture du
+   ticket).
+5. **Tour de poll suivant** : branche `ai/11` supprimée, issue #11 close et
+   délabellisée, `🔔 ✅ PR #12 mergée — 🧹 branche ai/11 supprimée`. Le Pi
+   s'auto-met à jour et l'endpoint est en production :
+   ```bash
+   $ curl -s http://ia-orchestrator.home:5000/conso
+   [{"appels":2,"cout_usd":0.477,"ticket":"fgeronimi/ia-orchestrator#11",
+     "tokens_generes":4177,"tokens_lus":494731}, …]
+   ```
+   L'agent a donc écrit, relu, et mis en production l'endpoint qui mesure… son
+   propre coût : **0,48 $** pour ce ticket.
+
 ## Garde-fous
 
 - **Rien n'atteint `main` sans toi** : PR draft systématique, merge humain.
