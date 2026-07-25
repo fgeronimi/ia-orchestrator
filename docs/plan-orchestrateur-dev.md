@@ -82,6 +82,25 @@ en base.
 - La SQLite dédoublonne les commentaires (un `comment_id` ne se rejoue pas).
 - L'agent ne pousse que sur des branches `ai/*`, jamais sur `main`.
 
+### Notifications — une par étape
+
+Chaque transition envoie une notif Discord, pour suivre l'avancement en direct :
+
+| Étape | Notif |
+|---|---|
+| ticket pris | 🎫 « #12 pris en charge — *titre* » |
+| code en cours | 🔨 « #12 : implémentation… » (+ résumé du plan) |
+| PR ouverte | 🔍 « #12 : PR draft #34 prête à relire » + lien + auto-review |
+| révision | ✏️ « #12 : commentaires pris en compte, repush » |
+| mergée | ✅ « PR #34 mergée » |
+| suite | 🚀 « déploiement lancé » / 🧹 « branche nettoyée » + résultat |
+| échec | ⚠️ à toute étape qui casse (tests rouges, conflit, erreur API) |
+
+**Canal dédié** (ex. `#orchestrateur`), séparé de `#idees` : le flux par étape
+est verbeux et ne doit pas noyer le reste. Les notifs viennent du **poller** (un
+process distinct du bot), donc via **webhook** — `DISCORD_WEBHOOK_URL` pointe sur
+ce canal (`lib/notify` l'utilise déjà pour les process hors-bot).
+
 ---
 
 ## 4. Plan par phases
