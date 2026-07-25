@@ -56,6 +56,12 @@ journalctl -u <service> -f                    # vérifier les logs
   sur l'email pro (la machine, poste Webedia, a un git global pro qui sinon
   attribue les commits au mauvais compte GitHub). Historique déjà réécrit dans ce
   sens le 2026-07-25.
+- Messages au format **Conventional Commits** (règle du 2026-07-25, méthode
+  détaillée dans `/bakaa-commit`) : `type(scope): description`, description en
+  français, footer `Refs: #<n>` si la branche est `ai/<n>`. Types usuels :
+  feat, fix, docs, refactor, test, ci, chore. (Les commits programmatiques de
+  l'orchestrateur gardent leur convention `ai: #<n> …` — ce sont des commits
+  de l'agent, pas des tiens.)
 - Ne commiter/pusher que quand demandé. `make deploy` (depuis le Mac) pousse +
   met le Pi à jour. Le Pi auto-update aussi toutes les 10 min (timer sync).
 
