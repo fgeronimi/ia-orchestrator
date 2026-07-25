@@ -11,17 +11,23 @@
 |---|---|
 | **Phase 0** — poller (lecture GitHub → notif Discord, dédup) | ✅ **fait & déployé** |
 | **Phase 1** — l'exécutant (issue → code → PR draft + auto-review) | ✅ **fait & validé live** (1a, 1b, 1c, auto-review) |
-| Phase 2 — suite après merge (déploiement / révision) | ⬜ à venir |
-| Phase 3 — élargissement (multi-repos, CI, garde-fous) | ⬜ à venir |
+| **Phase 2** — suite après merge (nettoyage + boucle de révision) | ✅ **fait & validé live** |
+| Phase 3 — élargissement (multi-repos, CI, garde-fous, repos.yaml) | ⬜ à venir |
 
 **Ce qui tourne aujourd'hui :** un timer systemd (`orchestrator-poll`) lance
 `poll.py` toutes les 5 min sur le Pi ; il lit les issues taggées `ai-ready` du
 repo surveillé, notifie les **nouvelles** dans `#orchestrateur` (dédup SQLite),
-puis **traite la première en inline** via `pipelines/dev_executor` — un ticket
-par tour, sous verrou `flock` (`state/executor.lock`). L'exécutant : label
-`ai-working`, workspace, branche `ai/<n>`, Claude implémente, commit/push,
-PR draft, auto-review en commentaire de PR, notif à chaque étape. Validé live
-sur l'issue #3 → PR #4 (+ auto-review). Voir §7 pour la Phase 0.
+puis nettoie les PR d'agent mergées (`dev_followup` : branche supprimée, label
+retiré), puis lance **une action lourde** sous verrou `flock`
+(`state/executor.lock`), révision prioritaire :
+- nouveaux commentaires humains sur une PR d'agent → `dev_executor.reviser()`
+  (Claude corrige sur la branche, repush, répond sur la PR) ;
+- sinon première issue `ai-ready` → `dev_executor.executer()` : label
+  `ai-working`, workspace, branche `ai/<n>`, Claude implémente, commit/push,
+  PR draft, auto-review en commentaire, notif à chaque étape.
+
+Validé live : issue #3 → PR #4 (mergée + nettoyée), issue #5 → PR #6
+(+ révision sur commentaire). Voir §7 pour la Phase 0.
 
 ---
 
@@ -66,7 +72,7 @@ Les pipelines actuels sont **one-shot sans état**. Ici, trois nouveautés :
 | `poll.py` + `infra/poll.sh` + `orchestrator-poll.timer` | boucle de polling → notif | ✅ fait |
 | `pipelines/dev_executor.py` | l'exécutant : issue → code → PR + auto-review | ✅ fait |
 | `state/workspaces/<repo>/` | clones des repos surveillés où Claude code (`lib/workspace`) | ✅ fait |
-| `data/repos.yaml` | repos surveillés + config par repo (tests, déploiement) | ⬜ Phase 2 |
+| `data/repos.yaml` | repos surveillés + config par repo (tests, déploiement) | ⬜ Phase 3 |
 | `lib/github.py` (écriture : branches, PR, commentaires) | Phase 1 | ✅ fait |
 
 > `lib/github.py` et le poller sont **développables et testables en local depuis
@@ -84,22 +90,22 @@ en base.
 [toi] tu crées une issue + label  ai-ready
         │  (poll détecte)
         ▼
-  ai-working   ← l'agent prend, clone/pull le workspace, code, lance les tests
-        │
-        ▼
-  ai-review    ← PR draft ouverte + auto-review en commentaire → notif Discord
-        │  (poll détecte tes nouveaux commentaires de review)
+  ai-working   ← l'agent prend, clone/pull le workspace, code, lance les tests,
+        │        ouvre la PR draft + auto-review en commentaire → notif Discord
+        │  (poll détecte tes nouveaux commentaires sur la PR)
         ├──▶ l'agent révise, push, re-notifie   (boucle tant que tu commentes)
         │
    [TOI] tu merges la PR
         │  (poll détecte le merge)
         ▼
-  post-merge   ← selon repos.yaml : déclenche CI/déploiement OU cleanup branche
-                 → notif du résultat
+  post-merge   ← cleanup : branche ai/* supprimée, label retiré → notif
+                 (Phase 3 : CI/déploiement selon repos.yaml)
 ```
 
 - `ai-working` empêche un second tour de polling de reprendre un ticket en cours.
-- La SQLite dédoublonne les commentaires (un `comment_id` ne se rejoue pas).
+  (Pas de label `ai-review` distinct : la PR draft s'ouvre sous `ai-working`.)
+- La SQLite dédoublonne les commentaires (un `comment_id` ne se rejoue pas) et
+  les PR mergées déjà nettoyées.
 - L'agent ne pousse que sur des branches `ai/*`, jamais sur `main`.
 
 ### Notifications — une par étape
@@ -170,11 +176,23 @@ ticket à la fois.
   notifie ⚠️ mais ne fait pas échouer le run (la PR est déjà ouverte).
   Validé live : issue #3 → PR #4 + auto-review pertinente en commentaire.
 
-### Phase 2 — La suite après merge
-- `pipelines/dev_followup.py` : PR mergée → selon `repos.yaml`, déclenche le
-  déploiement/CI ou nettoie la branche.
-- Boucle de révision : nouveaux commentaires de review sur une PR d'agent →
-  l'agent corrige et repush.
+### Phase 2 — La suite après merge ✅ FAIT & validé live
+- `pipelines/dev_followup.py` : à chaque tour de poll (léger, API seulement),
+  les PR fermées sur une branche `ai/*` sont traitées une seule fois
+  (`state.prs_suivies`) : mergée → branche supprimée + label `ai-working`
+  retiré + notif ✅🧹 ; fermée sans merge → marquée vue, sans action (décision
+  humaine). Validé live sur la PR #4 (issue #3).
+- Boucle de révision (`dev_executor`) : `chercher_revision()` balaye les PR
+  d'agent ouvertes et agrège les nouveaux commentaires humains — conversation
+  ET diff (deux espaces d'ids, clés `issue-`/`review-` dans
+  `state.commentaires_vus`). Les commentaires de l'orchestrateur (même login,
+  même PAT) sont écartés par leur **préfixe 🤖**. `reviser()` : workspace sur
+  la branche de la PR, Claude applique les commentaires
+  (Read/Edit/Write/Bash), commit, repush, répond sur la PR, notif. Les
+  commentaires ne sont marqués vus qu'après succès (retente au tour suivant).
+  Une révision est **prioritaire** sur un nouveau ticket (une seule action
+  lourde par tour, même verrou). Validé live sur la PR #6 (issue #5) :
+  commentaire → correction exacte → repush + réponse.
 
 ### Phase 3 — Élargissement
 Plusieurs repos, review plus fine (checklist, diff-aware), intégration CI
@@ -200,9 +218,10 @@ concrète (statut GitHub Actions), garde-fous supplémentaires.
 
 ## 6. Prochaine action
 
-**Phase 2 — la suite après merge** : `pipelines/dev_followup.py` (PR mergée →
-déploiement/CI ou nettoyage de branche) et la boucle de révision (nouveaux
-commentaires de review sur une PR d'agent → l'agent corrige et repush). Voir §4.
+**Phase 3 — élargissement** : plusieurs repos surveillés (`data/repos.yaml` :
+tests, déploiement par repo), review plus fine (checklist, diff-aware),
+intégration CI concrète (statut GitHub Actions), garde-fous supplémentaires
+(sandbox des tests type `systemd-run --scope`). Voir §4 et §5.
 
 ---
 

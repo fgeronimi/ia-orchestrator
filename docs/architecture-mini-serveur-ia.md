@@ -2,7 +2,7 @@
 
 > Document de référence, tenu à jour pour servir de contexte Claude Code.
 > Reflète l'état **réellement déployé**, pas seulement l'intention.
-> Dernière mise à jour : 2026-07-25 (Phase 1 du pipeline dev GitHub validée live).
+> Dernière mise à jour : 2026-07-25 (Phases 1 et 2 du pipeline dev GitHub validées live).
 
 ---
 
@@ -65,8 +65,16 @@ phases 0→3, implémentation actuelle).
   (`run_claude`, Read/Edit/Write/Bash) → commit/push → PR draft → auto-review
   (Claude relit son diff, Read seul) en commentaire de PR → notif par étape.
   Validé live : issue #3 → PR #4 + auto-review.
-- **Phase 2 ⬜ prochaine** : la suite après merge (déploiement/CI ou nettoyage,
-  boucle de révision sur les commentaires de PR).
+- **Phase 2 ✅ faite & validée live** : la suite après merge.
+  `pipelines/dev_followup.py` nettoie les PR d'agent mergées (branche `ai/*`
+  supprimée, label retiré, notif ; dédup SQLite). Boucle de révision : les
+  nouveaux commentaires humains sur une PR d'agent (conversation + diff,
+  ceux de l'orchestrateur écartés par leur préfixe 🤖) déclenchent
+  `dev_executor.reviser()` — Claude corrige sur la branche, repush, répond
+  sur la PR. Révision prioritaire sur nouveau ticket, une action lourde par
+  tour. Validé live : PR #4 nettoyée, PR #6 révisée sur commentaire.
+- **Phase 3 ⬜ prochaine** : élargissement (multi-repos via `repos.yaml`,
+  statut CI, garde-fous supplémentaires).
 
 ### `pipelines/dev_jira.py` — ⚠️ legacy, à retirer/recycler
 Pipeline Discord « idée → brouillon de ticket » (Claude reformule une idée en
@@ -88,7 +96,8 @@ ia-orchestrator/
 ├── server.py                  # endpoint Flask /health (port 5000)
 ├── poll.py                    # ✅ poller : issues ai-ready → notif + exécution (1 ticket/tour, verrou)
 ├── pipelines/
-│   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR draft + auto-review
+│   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR draft + auto-review + révision
+│   ├── dev_followup.py        # ✅ suite après merge : nettoyage branche/label des PR mergées
 │   └── dev_jira.py            # ⚠️ legacy : idée Discord → brouillon (avant pivot)
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
@@ -161,12 +170,13 @@ il est bloqué sur le Mac (voir §1).
 | `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min) |
 
 ### Poller GitHub (`orchestrator-poll.timer` → `poll.py`)
-Toutes les 5 min, `poll.py` lit les issues taggées `ai-ready` du repo
-`WATCHED_REPO`, notifie les **nouvelles** dans `#orchestrateur` (dédup SQLite,
-`state/orchestrator.db`), puis **exécute la première** via
-`pipelines/dev_executor` (un ticket par tour, verrou `state/executor.lock`).
-Un run peut donc durer plusieurs minutes (Claude implémente + auto-review).
-Détails et limites : `docs/plan-orchestrateur-dev.md` §4 et §7.
+Toutes les 5 min, `poll.py` : notifie les **nouvelles** issues `ai-ready`
+(dédup SQLite, `state/orchestrator.db`), nettoie les PR d'agent mergées
+(`dev_followup`), puis lance **une action lourde** sous verrou
+(`state/executor.lock`) — révision d'une PR commentée (prioritaire) ou
+exécution de la première issue `ai-ready`. Un run peut donc durer plusieurs
+minutes (Claude implémente + auto-review). Détails et limites :
+`docs/plan-orchestrateur-dev.md` §4 et §7.
 ```bash
 journalctl -u orchestrator-poll -f                         # logs du poller
 .venv/bin/python poll.py fgeronimi/ia-orchestrator         # un tour à la main
