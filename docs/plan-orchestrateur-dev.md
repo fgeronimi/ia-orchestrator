@@ -10,15 +10,18 @@
 | Phase | État |
 |---|---|
 | **Phase 0** — poller (lecture GitHub → notif Discord, dédup) | ✅ **fait & déployé** |
-| **Phase 1** — l'exécutant (issue → code → PR draft) | 🚧 **en cours** — 1a (chemin d'écriture) ✅ + 1b (Claude implémente) ✅ **validés live** ; reste 1c (câblage poller) + auto-review |
+| **Phase 1** — l'exécutant (issue → code → PR draft + auto-review) | ✅ **fait & validé live** (1a, 1b, 1c, auto-review) |
 | Phase 2 — suite après merge (déploiement / révision) | ⬜ à venir |
 | Phase 3 — élargissement (multi-repos, CI, garde-fous) | ⬜ à venir |
 
 **Ce qui tourne aujourd'hui :** un timer systemd (`orchestrator-poll`) lance
 `poll.py` toutes les 5 min sur le Pi ; il lit les issues taggées `ai-ready` du
-repo surveillé et notifie les **nouvelles** dans `#orchestrateur`. La dédup
-(SQLite) évite de re-signaler un ticket déjà vu. Voir §7 pour les détails
-d'implémentation.
+repo surveillé, notifie les **nouvelles** dans `#orchestrateur` (dédup SQLite),
+puis **traite la première en inline** via `pipelines/dev_executor` — un ticket
+par tour, sous verrou `flock` (`state/executor.lock`). L'exécutant : label
+`ai-working`, workspace, branche `ai/<n>`, Claude implémente, commit/push,
+PR draft, auto-review en commentaire de PR, notif à chaque étape. Validé live
+sur l'issue #3 → PR #4 (+ auto-review). Voir §7 pour la Phase 0.
 
 ---
 
@@ -61,10 +64,10 @@ Les pipelines actuels sont **one-shot sans état**. Ici, trois nouveautés :
 | `lib/github.py` | wrapper API GitHub (lecture : `list_issues`). PAT scopé. | ✅ fait (lecture) |
 | `lib/state.py` + `state/orchestrator.db` | mémoire d'idempotence (issues déjà notifiées) | ✅ fait |
 | `poll.py` + `infra/poll.sh` + `orchestrator-poll.timer` | boucle de polling → notif | ✅ fait |
-| `pipelines/dev_executor.py` | l'exécutant : issue → code → PR | 🚧 Phase 1 |
-| `state/workspaces/<repo>/` | clones des repos surveillés où Claude code | ⬜ Phase 1 |
-| `data/repos.yaml` | repos surveillés + config par repo (tests, déploiement) | ⬜ Phase 1/2 |
-| `lib/github.py` (écriture : branches, PR, commentaires) | Phase 1 | ⬜ |
+| `pipelines/dev_executor.py` | l'exécutant : issue → code → PR + auto-review | ✅ fait |
+| `state/workspaces/<repo>/` | clones des repos surveillés où Claude code (`lib/workspace`) | ✅ fait |
+| `data/repos.yaml` | repos surveillés + config par repo (tests, déploiement) | ⬜ Phase 2 |
+| `lib/github.py` (écriture : branches, PR, commentaires) | Phase 1 | ✅ fait |
 
 > `lib/github.py` et le poller sont **développables et testables en local depuis
 > le Mac** contre un vrai repo GitHub — seule l'exécution de Claude a besoin du
@@ -150,13 +153,22 @@ ticket à la fois.
   ticket, auto-détecte les tests. Testé sur l'issue #1 → PR #2 réelle (Claude a
   ajouté `make env-push` au README). PR réutilisée si déjà ouverte.
   Lancer un ticket à la main : `python -m pipelines.dev_executor <repo> <n>`.
-- *1c — câblage poller* ⬜ **prochaine étape** : le poller appelle l'exécutant
-  (verrou fichier `state/executor.lock`, **1 ticket/tour**) au lieu de juste
-  notifier. Le label `ai-working` sert d'idempotence (l'issue n'est plus
-  `ai-ready` donc pas reprise). Attention : `orchestrator-poll.service` a déjà le
-  PATH node (l'exécutant appelle `claude`).
-- *auto-review* ⬜ : après la PR, Claude relit son propre diff
-  (`allowed_tools=["Read"]`) et poste un commentaire de review sur la PR.
+- *1c — câblage poller* ✅ **validé live** : après les notifs, `poll.py` traite
+  la **première** issue `ai-ready` en inline via `dev_executor.executer()` —
+  un ticket par tour, sous verrou `flock` sur `state/executor.lock`
+  (non-bloquant : déjà pris → skip du tour ; libéré automatiquement à la mort
+  du process, pas de verrou orphelin après crash). Le label `ai-working` sert
+  d'idempotence (l'issue n'est plus `ai-ready` donc pas reprise). Piège vécu :
+  l'unité **installée** dans `/etc/systemd/system` n'avait pas le PATH node du
+  repo → `FileNotFoundError: claude`. Après toute modif d'un `.service`,
+  refaire `make install-timer`.
+- *auto-review* ✅ **validé live** : après la PR, le diff `base...HEAD` est
+  calculé en Python (`workspace.diff_contre`, tronqué à 40k chars) et injecté
+  dans le prompt ; Claude le relit depuis le workspace
+  (`allowed_tools=["Read"]`) et le commentaire est posté sur la PR
+  (`comment_issue` : même endpoint pour les PR). Un échec d'auto-review
+  notifie ⚠️ mais ne fait pas échouer le run (la PR est déjà ouverte).
+  Validé live : issue #3 → PR #4 + auto-review pertinente en commentaire.
 
 ### Phase 2 — La suite après merge
 - `pipelines/dev_followup.py` : PR mergée → selon `repos.yaml`, déclenche le
@@ -188,9 +200,9 @@ concrète (statut GitHub Actions), garde-fous supplémentaires.
 
 ## 6. Prochaine action
 
-Construire la **Phase 1 — l'exécutant** (`pipelines/dev_executor.py`) : voir §4.
-Le poller (§7) appellera l'exécutant au lieu de juste notifier, quand une issue
-`ai-ready` est détectée.
+**Phase 2 — la suite après merge** : `pipelines/dev_followup.py` (PR mergée →
+déploiement/CI ou nettoyage de branche) et la boucle de révision (nouveaux
+commentaires de review sur une PR d'agent → l'agent corrige et repush). Voir §4.
 
 ---
 

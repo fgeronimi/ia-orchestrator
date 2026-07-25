@@ -2,7 +2,7 @@
 
 > Document de référence, tenu à jour pour servir de contexte Claude Code.
 > Reflète l'état **réellement déployé**, pas seulement l'intention.
-> Dernière mise à jour : 2026-07-25 (Phase 0 du pipeline dev GitHub déployée).
+> Dernière mise à jour : 2026-07-25 (Phase 1 du pipeline dev GitHub validée live).
 
 ---
 
@@ -58,8 +58,15 @@ phases 0→3, implémentation actuelle).
   → `poll.py` lit les issues `ai-ready` du repo surveillé (`WATCHED_REPO`) et
   notifie les **nouvelles** dans `#orchestrateur`. Dédup via SQLite
   (`lib/state`, `state/orchestrator.db`). Lecture GitHub via `lib/github`.
-- **Phase 1 🚧 prochaine** : l'exécutant — l'issue est réellement implémentée par
-  Claude (workspace cloné, code, tests, branche `ai/*`, PR draft, auto-review).
+- **Phase 1 ✅ faite & validée live** : l'exécutant. Le poller traite la
+  première issue `ai-ready` en inline (un ticket par tour, verrou `flock` sur
+  `state/executor.lock`) via `pipelines/dev_executor` : label `ai-working` →
+  workspace cloné (`lib/workspace`) → branche `ai/<n>` → Claude implémente
+  (`run_claude`, Read/Edit/Write/Bash) → commit/push → PR draft → auto-review
+  (Claude relit son diff, Read seul) en commentaire de PR → notif par étape.
+  Validé live : issue #3 → PR #4 + auto-review.
+- **Phase 2 ⬜ prochaine** : la suite après merge (déploiement/CI ou nettoyage,
+  boucle de révision sur les commentaires de PR).
 
 ### `pipelines/dev_jira.py` — ⚠️ legacy, à retirer/recycler
 Pipeline Discord « idée → brouillon de ticket » (Claude reformule une idée en
@@ -79,15 +86,17 @@ ia-orchestrator/
 ├── .env / .env.example        # .env NON versionné (chmod 600)
 ├── bot.py                     # routeur Discord (mention → pipeline mappé par nom de canal)
 ├── server.py                  # endpoint Flask /health (port 5000)
-├── poll.py                    # ✅ poller GitHub : issues ai-ready → notif (dédup)
+├── poll.py                    # ✅ poller : issues ai-ready → notif + exécution (1 ticket/tour, verrou)
 ├── pipelines/
+│   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR draft + auto-review
 │   └── dev_jira.py            # ⚠️ legacy : idée Discord → brouillon (avant pivot)
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
-│   ├── github.py              # ✅ wrapper API GitHub (lecture : list_issues)
+│   ├── github.py              # ✅ wrapper API GitHub (lecture + écriture : PR, labels, commentaires)
+│   ├── workspace.py           # ✅ clones locaux où l'exécutant code (branche, commit, push)
 │   └── state.py               # ✅ idempotence SQLite (issues déjà notifiées)
-├── state/                     # runtime, gitignored (orchestrator.db, futurs workspaces)
+├── state/                     # runtime, gitignored (orchestrator.db, workspaces/, executor.lock)
 ├── Makefile                   # exploitation : sync, deploy, env-push/pull, logs, install-timer
 ├── infra/
 │   ├── setup.sh               # install idempotente (Pi ou VPS Debian)
@@ -103,8 +112,8 @@ ia-orchestrator/
     └── plan-orchestrateur-dev.md         # plan + implémentation du pipeline dev GitHub
 ```
 
-> À créer pour la Phase 1 (voir le plan) : `pipelines/dev_executor.py`,
-> l'écriture dans `lib/github.py` (branches/PR/commentaires), `data/repos.yaml`.
+> À créer pour la Phase 2 (voir le plan) : `pipelines/dev_followup.py`,
+> `data/repos.yaml` (config par repo : tests, déploiement).
 
 ---
 
@@ -153,8 +162,11 @@ il est bloqué sur le Mac (voir §1).
 
 ### Poller GitHub (`orchestrator-poll.timer` → `poll.py`)
 Toutes les 5 min, `poll.py` lit les issues taggées `ai-ready` du repo
-`WATCHED_REPO` et notifie les **nouvelles** dans `#orchestrateur` (dédup SQLite,
-`state/orchestrator.db`). Détails et limites : `docs/plan-orchestrateur-dev.md` §7.
+`WATCHED_REPO`, notifie les **nouvelles** dans `#orchestrateur` (dédup SQLite,
+`state/orchestrator.db`), puis **exécute la première** via
+`pipelines/dev_executor` (un ticket par tour, verrou `state/executor.lock`).
+Un run peut donc durer plusieurs minutes (Claude implémente + auto-review).
+Détails et limites : `docs/plan-orchestrateur-dev.md` §4 et §7.
 ```bash
 journalctl -u orchestrator-poll -f                         # logs du poller
 .venv/bin/python poll.py fgeronimi/ia-orchestrator         # un tour à la main
@@ -192,7 +204,11 @@ sudo systemctl restart orchestrator-bot       # après modif de code/-env
 
 **Piège systemd connu :** nvm n'existe pas dans le contexte systemd. Les
 `.service` ont le chemin node en dur dans `Environment=PATH=...` — le mettre à
-jour si la version de Node change (`ls ~/.nvm/versions/node/`).
+jour si la version de Node change (`ls ~/.nvm/versions/node/`). Et après toute
+modif d'un `.service`/`.timer`, refaire `make install-timer` : l'unité active
+est la **copie** dans `/etc/systemd/system`, pas le fichier du repo (piège
+vécu : PATH node ajouté au repo mais unité installée jamais rafraîchie →
+`FileNotFoundError: claude`).
 
 ---
 
@@ -212,8 +228,9 @@ jour si la version de Node change (`ls ~/.nvm/versions/node/`).
 ## 7. Reste à faire
 
 **Cap principal**
-- **Pipeline dev GitHub** — dérouler `docs/plan-orchestrateur-dev.md`, en
-  commençant par la Phase 0 (`lib/github.py` lecture seule + poller qui notifie).
+- **Pipeline dev GitHub** — dérouler `docs/plan-orchestrateur-dev.md` :
+  Phases 0 et 1 faites, prochaine étape = Phase 2 (suite après merge :
+  déploiement/nettoyage + boucle de révision).
 
 **Court terme**
 - **VS Code Remote-SSH** depuis le Mac (via LAN) pour du dev confortable.
