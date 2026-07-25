@@ -44,6 +44,9 @@ il notifie sur Discord les issues taggées `ai-ready`. Suivi :
 Le Pi se met à jour tout seul : un push sur `main` est récupéré et les services
 redémarrés dans les 10 min (`infra/sync.sh` + `orchestrator-sync.timer`).
 
+La conso Claude (tokens, coût estimé) est tracée par ticket ; consultable avec
+`make conso` (sur le Pi) ou `make remote-conso` (depuis le Mac).
+
 ## Cycle de vie d'un ticket
 
 État porté par les labels GitHub de l'issue : `ai-ready` (toi, déclencheur) →
