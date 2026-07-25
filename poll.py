@@ -1,21 +1,26 @@
-"""Poller — un tour du pipeline dev GitHub.
+"""Poller — un tour du pipeline dev GitHub, sur tous les repos surveillés.
 
-Un tour :
+Repos surveillés : `data/repos.yaml` (clé `repos`), sinon `WATCHED_REPO` du
+.env, sinon l'argument CLI (qui prime sur tout, pratique pour un test ciblé).
+
+Un tour, pour CHAQUE repo :
   1. notifie les nouvelles issues `ai-ready` (dédup SQLite via lib/state)
   2. suite après merge : nettoie les PR d'agent mergées (dev_followup, léger)
-  3. UNE action lourde (Claude) sous verrou fichier, révision prioritaire :
-     - nouveaux commentaires humains sur une PR d'agent → dev_executor.reviser
-     - sinon première issue `ai-ready` → dev_executor.executer
+  3. CI : notifie le résultat des check runs des PR d'agent (une fois par sha)
+puis UNE SEULE action lourde (Claude) tous repos confondus, sous verrou
+fichier, révision prioritaire :
+  - nouveaux commentaires humains sur une PR d'agent → dev_executor.reviser
+  - sinon première issue `ai-ready` → dev_executor.executer
 
 Idempotence : l'exécutant pose `ai-working` (et retire `ai-ready`) dès la
-prise en charge ; les commentaires et PR mergées traités sont mémorisés en
-SQLite. Le verrou (flock sur state/executor.lock) empêche deux exécutants
-simultanés ; il est libéré automatiquement à la mort du process, donc pas de
-verrou orphelin après un crash.
+prise en charge ; commentaires, PR mergées et statuts CI traités sont
+mémorisés en SQLite. Le verrou (flock sur state/executor.lock) empêche deux
+exécutants simultanés ; il est libéré automatiquement à la mort du process,
+donc pas de verrou orphelin après un crash.
 
 Usage :
-    .venv/bin/python poll.py fgeronimi/ia-orchestrator
-    # ou repo lu dans WATCHED_REPO du .env
+    .venv/bin/python poll.py                          # repos.yaml / WATCHED_REPO
+    .venv/bin/python poll.py fgeronimi/ia-orchestrator  # un repo précis
 """
 
 import asyncio
@@ -24,34 +29,60 @@ import os
 import sys
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 
 from lib import github, notify, state
 from pipelines import dev_executor, dev_followup
 
 LABEL = "ai-ready"
-VERROU = Path(__file__).parent / "state" / "executor.lock"
+RACINE = Path(__file__).parent
+VERROU = RACINE / "state" / "executor.lock"
+REPOS_YAML = RACINE / "data" / "repos.yaml"
 
 
-async def poll(repo: str) -> None:
-    issues = github.list_issues(repo, labels=LABEL)
-    nouveaux = [i for i in issues if not state.deja_notifiee(repo, i["number"])]
+def charger_repos() -> list[str]:
+    """Repos surveillés : data/repos.yaml, sinon WATCHED_REPO du .env."""
+    if REPOS_YAML.exists():
+        config = yaml.safe_load(REPOS_YAML.read_text()) or {}
+        if config.get("repos"):
+            return config["repos"]
+    repo = os.environ.get("WATCHED_REPO", "")
+    return [repo] if repo else []
 
-    for issue in nouveaux:
-        await notify.notify(
-            f"🎫 Ticket à faire — {repo}#{issue['number']} : {issue['title']}\n"
-            f"{issue['url']}"
-        )
-        # Marqué après la notif. Limite connue : si le webhook est down, notify
-        # loggue l'erreur mais l'issue est quand même marquée (pas de re-tentative).
-        state.marquer_notifiee(repo, issue["number"])
-        print(f"[poll] notifié #{issue['number']} {issue['title']}")
 
-    # --- Phase 2 : suite après merge (API seulement, pas de Claude) ----------
-    await dev_followup.traiter_merges(repo)
+async def poll(repos: list[str]) -> None:
+    a_faire: list[tuple[str, dict]] = []  # (repo, issue) candidats à l'exécution
 
-    revision = dev_executor.chercher_revision(repo)
-    if not issues and revision is None:
+    for repo in repos:
+        issues = github.list_issues(repo, labels=LABEL)
+        nouveaux = [i for i in issues if not state.deja_notifiee(repo, i["number"])]
+
+        for issue in nouveaux:
+            await notify.notify(
+                f"🎫 Ticket à faire — {repo}#{issue['number']} : {issue['title']}\n"
+                f"{issue['url']}"
+            )
+            # Marqué après la notif. Limite connue : si le webhook est down, notify
+            # loggue l'erreur mais l'issue est quand même marquée (pas de re-tentative).
+            state.marquer_notifiee(repo, issue["number"])
+            print(f"[poll] notifié {repo}#{issue['number']} {issue['title']}")
+
+        # --- Phase 2/3 : suivi post-merge et CI (API seulement, pas de Claude)
+        await dev_followup.traiter_merges(repo)
+        await dev_followup.surveiller_ci(repo)
+
+        a_faire += [(repo, i) for i in issues]
+
+    # Première PR d'agent avec de nouveaux commentaires, tous repos confondus.
+    revision = None
+    for repo in repos:
+        trouvee = dev_executor.chercher_revision(repo)
+        if trouvee is not None:
+            revision = (repo, *trouvee)
+            break
+
+    if not a_faire and revision is None:
         print(f"[poll] rien à traiter (ni issue '{LABEL}', ni révision)")
         return
 
@@ -66,19 +97,20 @@ async def poll(repo: str) -> None:
         # Révision prioritaire : débloquer une review en cours passe avant
         # entamer un nouveau ticket.
         if revision is not None:
-            pr, commentaires = revision
-            print(f"[poll] révision de la PR #{pr['number']} "
+            repo, pr, commentaires = revision
+            print(f"[poll] révision de la PR {repo}#{pr['number']} "
                   f"({len(commentaires)} commentaire(s))")
             await dev_executor.reviser(repo, pr, commentaires)
         else:
-            issue = issues[0]
-            print(f"[poll] exécution de #{issue['number']} {issue['title']}")
+            repo, issue = a_faire[0]
+            print(f"[poll] exécution de {repo}#{issue['number']} {issue['title']}")
             await dev_executor.executer(repo, issue)
 
 
 if __name__ == "__main__":
     load_dotenv()
-    repo = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("WATCHED_REPO", "")
-    if not repo:
-        sys.exit("Usage : python poll.py <owner/repo>  (ou définir WATCHED_REPO)")
-    asyncio.run(poll(repo))
+    repos = [sys.argv[1]] if len(sys.argv) > 1 else charger_repos()
+    if not repos:
+        sys.exit("Usage : python poll.py [owner/repo]  "
+                 "(ou data/repos.yaml, ou WATCHED_REPO)")
+    asyncio.run(poll(repos))
