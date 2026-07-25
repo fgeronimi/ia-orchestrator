@@ -208,8 +208,11 @@ concrète (statut GitHub Actions), garde-fous supplémentaires.
   PAT dédié à cet usage, `main` en **branche protégée** côté GitHub, push
   restreint aux branches `ai/*`.
 - **Sandbox des tests.** `Bash` exécute le code du repo cloné sur un Pi partagé
-  avec les autres pipelines. Au minimum un `timeout` ; idéalement
-  `systemd-run --scope` avec limites CPU/mémoire. À cadrer en Phase 1.
+  avec les autres pipelines. **Décision (2026-07-25) : on reste au `timeout`**
+  (600 s, repos perso uniquement) — `systemd-run --scope` avec limites
+  CPU/mémoire est reporté « si besoin avéré » (fragile depuis le contexte
+  systemd du poller : pas de user manager, XDG_RUNTIME_DIR absent). À
+  reconsidérer avant de surveiller un repo tiers non maîtrisé.
 - **Secrets** : nouveau `GITHUB_TOKEN` (ou `GH_PAT`) → `.env` + `.env.example`.
 - **Auto-update du Pi** : déjà en place (`infra/sync.sh` + `orchestrator-sync.timer`).
   Un push sur `main` est récupéré et les services redémarrés dans les 10 min.

@@ -137,11 +137,19 @@ def list_pulls(repo: str, state: str = "open") -> list[dict]:
             "number": p["number"],
             "title": p["title"],
             "head": p["head"]["ref"],
+            "sha": p["head"]["sha"],
             "merged_at": p["merged_at"],
             "html_url": p["html_url"],
         }
         for p in brut
     ]
+
+
+def list_check_runs(repo: str, ref: str) -> list[dict]:
+    """Check runs (GitHub Actions & co) d'un commit. Vide si pas de CI."""
+    brut = _get(f"/repos/{repo}/commits/{ref}/check-runs", {"per_page": 100})
+    return [{"name": r["name"], "status": r["status"], "conclusion": r["conclusion"]}
+            for r in brut["check_runs"]]
 
 
 def list_comments(repo: str, numero: int) -> list[dict]:

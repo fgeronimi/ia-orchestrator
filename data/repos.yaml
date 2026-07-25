@@ -1,0 +1,6 @@
+# Repos surveillés par l'orchestrateur (un tour de poll les balaye tous).
+# Sans ce fichier, poll.py retombe sur WATCHED_REPO du .env (un seul repo).
+# Le PAT (GITHUB_TOKEN) doit être scopé sur chaque repo listé.
+# Prévu pour accueillir la config par repo (tests, déploiement) au besoin.
+repos:
+  - fgeronimi/ia-orchestrator

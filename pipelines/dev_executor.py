@@ -56,11 +56,17 @@ Diff de la PR (contre {base}) :
 {diff}
 ```
 
+Passe le diff au crible de cette checklist :
+1. Bugs : cas limites, erreurs non gérées, effets de bord hors du scope.
+2. Sécurité : secret en clair, injection (shell/SQL), entrée non validée.
+3. Fidélité au ticket : tout est couvert, rien en trop.
+4. Conventions du repo : CLAUDE.md, style des fichiers voisins.
+5. Tests : lancés ? auraient-ils dû l'être ?
+
 Rédige directement le commentaire de review (markdown), en français, concis :
-- bugs, risques ou effets de bord éventuels ;
-- écarts avec le ticket ou les conventions du repo ;
-- termine par un verdict clair : « ✅ RAS » ou « ⚠️ points à vérifier avant merge ».
-Pas de préambule, pas de répétition du diff."""
+cite uniquement les points de la checklist qui méritent une remarque (tais les
+points RAS), et termine par un verdict clair : « ✅ RAS » ou « ⚠️ points à
+vérifier avant merge ». Pas de préambule, pas de répétition du diff."""
 
 PROMPT_REVISION = """Tu es dans un dépôt git, sur la branche de la PR #{pr}
 (ticket #{n} : {titre}). Des commentaires de review demandent des corrections.

@@ -41,6 +41,14 @@ def _connexion() -> sqlite3.Connection:
         "  PRIMARY KEY (repo, cle)"
         ")"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ci_notifiee ("  # statuts CI déjà notifiés (par sha)
+        "  repo TEXT NOT NULL,"
+        "  sha TEXT NOT NULL,"
+        "  notifiee_le TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  PRIMARY KEY (repo, sha)"
+        ")"
+    )
     return conn
 
 
@@ -75,6 +83,23 @@ def marquer_pr_suivie(repo: str, numero: int) -> None:
         conn.execute(
             "INSERT OR IGNORE INTO prs_suivies (repo, numero) VALUES (?, ?)",
             (repo, numero),
+        )
+
+
+def ci_deja_notifiee(repo: str, sha: str) -> bool:
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT 1 FROM ci_notifiee WHERE repo = ? AND sha = ?",
+            (repo, sha),
+        )
+        return cur.fetchone() is not None
+
+
+def marquer_ci_notifiee(repo: str, sha: str) -> None:
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO ci_notifiee (repo, sha) VALUES (?, ?)",
+            (repo, sha),
         )
 
 
