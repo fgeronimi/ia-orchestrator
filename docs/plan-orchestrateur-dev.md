@@ -10,7 +10,7 @@
 | Phase | État |
 |---|---|
 | **Phase 0** — poller (lecture GitHub → notif Discord, dédup) | ✅ **fait & déployé** |
-| Phase 1 — l'exécutant (issue → code → PR draft) | 🚧 **en cours (prochaine)** |
+| **Phase 1** — l'exécutant (issue → code → PR draft) | 🚧 **en cours** — increment 1a (chemin d'écriture) codé & testé en local, test live en attente du PAT en écriture |
 | Phase 2 — suite après merge (déploiement / révision) | ⬜ à venir |
 | Phase 3 — élargissement (multi-repos, CI, garde-fous) | ⬜ à venir |
 
@@ -132,6 +132,25 @@ Déployé sur le Pi avec un timer 5 min. Détails d'implémentation en §7.
 `run_claude(cwd=workspace, allowed_tools=["Read","Edit","Write","Bash"])` pour
 implémenter + lancer les tests → branche `ai/<issue>` → **PR draft** →
 auto-review postée en commentaire → notif. Tu merges à la main.
+
+**Décisions actées (2026-07-25) :** même PAT passé en écriture (Contents+Pull
+requests+Issues=write, scopé au repo) ; bac à sable = timeout simple (repos
+perso) ; Claude **auto-détecte** les commandes de test/build (pas de repos.yaml
+au début) ; exécution **inline dans le poller avec un verrou** fichier, un
+ticket à la fois.
+
+**Construit incrémentalement :**
+- *1a — chemin d'écriture* ✅ codé, testé en local. `lib/github` (écriture :
+  `get_default_branch`, `add_labels`, `remove_label`, `comment_issue`,
+  `create_pull`), `lib/workspace` (clone/branche/commit/push, token jamais
+  persisté ni loggué), `dev_executor.executer()` qui fait un changement **trivial**
+  (fichier `.ai/ticket-<n>.md`) → branche `ai/<n>` → PR draft → commentaire.
+  Test live en attente d'un **PAT en écriture**. Lancer :
+  `python -m pipelines.dev_executor <repo> <n>`.
+- *1b — Claude* ⬜ : remplacer le changement trivial par
+  `run_claude(cwd=workspace, allowed_tools=["Read","Edit","Write","Bash"])`.
+- *1c — câblage poller* ⬜ : le poller appelle l'exécutant (verrou, 1 ticket/tour)
+  au lieu de juste notifier ; le label `ai-working` sert d'idempotence.
 
 ### Phase 2 — La suite après merge
 - `pipelines/dev_followup.py` : PR mergée → selon `repos.yaml`, déclenche le
