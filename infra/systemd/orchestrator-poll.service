@@ -1,0 +1,19 @@
+# Poller GitHub : détecte les issues taggées ai-ready et les notifie.
+# Déclenché par orchestrator-poll.timer (oneshot).
+# Installation :  make install-timer
+# Logs :          journalctl -u orchestrator-poll -f
+
+[Unit]
+Description=Orchestrateur IA - poller GitHub (issues ai-ready)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=fgeronimi
+WorkingDirectory=/home/fgeronimi/ia-orchestrator
+EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+ExecStart=/bin/bash /home/fgeronimi/ia-orchestrator/infra/poll.sh
+
+# Pas besoin de node ici (poll.py = python pur). PrivateTmp par prudence.
+PrivateTmp=true

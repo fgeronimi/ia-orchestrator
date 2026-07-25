@@ -57,12 +57,11 @@ test: ## Vérifie que les modules importent
 	@$(PYTHON) -c "import bot, server, pipelines.dev_jira, lib.claude, lib.notify" \
 		&& echo "imports OK"
 
-install-timer: ## Installe le timer de synchronisation git (toutes les 10 min)
-	@sudo cp infra/systemd/orchestrator-sync.service infra/systemd/orchestrator-sync.timer \
-		/etc/systemd/system/
+install-timer: ## Installe les timers systemd (sync git + poll GitHub)
+	@sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
 	@sudo systemctl daemon-reload
-	@sudo systemctl enable --now orchestrator-sync.timer
-	@systemctl list-timers orchestrator-sync --no-pager
+	@sudo systemctl enable --now orchestrator-sync.timer orchestrator-poll.timer
+	@systemctl list-timers 'orchestrator-*' --no-pager
 
 # ------------------------------------------------------------ depuis le Mac
 

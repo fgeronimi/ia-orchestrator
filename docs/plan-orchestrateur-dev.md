@@ -3,7 +3,22 @@
 > Plan d'attaque pour transformer l'orchestrateur en assistant de code : tu crées
 > des tickets GitHub, le Pi les implémente, ouvre des PR, se relit, et gère la
 > suite après ton merge. Document de travail, mis à jour au fil des phases.
-> Créé le 2026-07-25.
+> Créé le 2026-07-25 · dernière mise à jour 2026-07-25.
+
+## État d'avancement
+
+| Phase | État |
+|---|---|
+| **Phase 0** — poller (lecture GitHub → notif Discord, dédup) | ✅ **fait & déployé** |
+| Phase 1 — l'exécutant (issue → code → PR draft) | 🚧 **en cours (prochaine)** |
+| Phase 2 — suite après merge (déploiement / révision) | ⬜ à venir |
+| Phase 3 — élargissement (multi-repos, CI, garde-fous) | ⬜ à venir |
+
+**Ce qui tourne aujourd'hui :** un timer systemd (`orchestrator-poll`) lance
+`poll.py` toutes les 5 min sur le Pi ; il lit les issues taggées `ai-ready` du
+repo surveillé et notifie les **nouvelles** dans `#orchestrateur`. La dédup
+(SQLite) évite de re-signaler un ticket déjà vu. Voir §7 pour les détails
+d'implémentation.
 
 ---
 
@@ -41,13 +56,15 @@ Les pipelines actuels sont **one-shot sans état**. Ici, trois nouveautés :
 
 ## 2. Briques à créer
 
-| Brique | Rôle | Modèle existant |
+| Brique | Rôle | État |
 |---|---|---|
-| `lib/github.py` | wrapper API : issues, PR, commentaires, statut de merge. PAT scopé. | `lib/claude`, `lib/notify` |
-| `state/orchestrator.db` (SQLite) | mémoire d'idempotence : ticket/commentaire déjà traité | déjà prévu dans `.gitignore` |
-| `state/workspaces/<repo>/` | clones des repos surveillés où Claude code | nouveau |
-| `infra/poll.sh` + `orchestrator-poll.timer` | boucle de polling, dispatch vers pipelines | `sync.sh` + son timer |
-| `data/repos.yaml` | repos surveillés + config par repo (tests, déploiement) | nouveau, versionné |
+| `lib/github.py` | wrapper API GitHub (lecture : `list_issues`). PAT scopé. | ✅ fait (lecture) |
+| `lib/state.py` + `state/orchestrator.db` | mémoire d'idempotence (issues déjà notifiées) | ✅ fait |
+| `poll.py` + `infra/poll.sh` + `orchestrator-poll.timer` | boucle de polling → notif | ✅ fait |
+| `pipelines/dev_executor.py` | l'exécutant : issue → code → PR | 🚧 Phase 1 |
+| `state/workspaces/<repo>/` | clones des repos surveillés où Claude code | ⬜ Phase 1 |
+| `data/repos.yaml` | repos surveillés + config par repo (tests, déploiement) | ⬜ Phase 1/2 |
+| `lib/github.py` (écriture : branches, PR, commentaires) | Phase 1 | ⬜ |
 
 > `lib/github.py` et le poller sont **développables et testables en local depuis
 > le Mac** contre un vrai repo GitHub — seule l'exécution de Claude a besoin du
@@ -105,10 +122,10 @@ ce canal (`lib/notify` l'utilise déjà pour les process hors-bot).
 
 ## 4. Plan par phases
 
-### Phase 0 — Plomberie & confiance *(à faire en premier, petit)*
-`lib/github.py` en **lecture seule** + `poll.sh` qui se contente de **notifier**
-« issue #12 taggée ai-ready » sur Discord. Valide : auth PAT, polling, dédup
-SQLite, notify. Zéro risque, entièrement testable en local. Dérisque tout le reste.
+### Phase 0 — Plomberie & confiance ✅ FAIT
+`lib/github.py` en lecture seule + `poll.py` qui notifie les issues `ai-ready`
+sur Discord, avec dédup SQLite. Valide : auth PAT, polling, dédup, notify.
+Déployé sur le Pi avec un timer 5 min. Détails d'implémentation en §7.
 
 ### Phase 1 — L'exécutant *(le cœur, ~80 % de la valeur)*
 `pipelines/dev_executor.py` : issue `ai-ready` → clone/pull workspace →
@@ -146,5 +163,48 @@ concrète (statut GitHub Actions), garde-fous supplémentaires.
 
 ## 6. Prochaine action
 
-Construire la **Phase 0** : `lib/github.py` lecture seule + le poller qui notifie.
-Petit, testable sur le Mac, dérisque l'ensemble.
+Construire la **Phase 1 — l'exécutant** (`pipelines/dev_executor.py`) : voir §4.
+Le poller (§7) appellera l'exécutant au lieu de juste notifier, quand une issue
+`ai-ready` est détectée.
+
+---
+
+## 7. Implémentation actuelle (Phase 0)
+
+### Fichiers
+- **`lib/github.py`** — wrapper API REST GitHub, lecture seule.
+  `list_issues(repo, labels=None, state="open")` → `[{number, title, labels, url}]`,
+  exclut les PR. Auth via `GITHUB_TOKEN` (env) ; optionnel pour un repo public,
+  requis pour un privé. Lève `GitHubError` sur 401/404/erreur HTTP.
+- **`lib/state.py`** — idempotence SQLite (`state/orchestrator.db`, gitignored).
+  Table `issues_notifiees(repo, numero, notifiee_le)`, clé primaire `(repo, numero)`.
+  `deja_notifiee(repo, numero)` / `marquer_notifiee(repo, numero)`.
+- **`poll.py`** (racine) — un tour de polling : `list_issues(repo, labels="ai-ready")`,
+  filtre les non-vues via `lib/state`, notifie chaque nouvelle via `lib/notify`,
+  la marque. Repo = `argv[1]` sinon `WATCHED_REPO` du `.env`.
+- **`infra/poll.sh`** — wrapper systemd : `cd` repo, lance `.venv/bin/python poll.py "$WATCHED_REPO"`.
+- **`infra/systemd/orchestrator-poll.{service,timer}`** — oneshot, toutes les 5 min.
+
+### Convention de label
+Le label déclencheur est **`ai-ready`** (anglais). Piège vécu : ne pas le confondre
+avec `ia-ready` (français) — comme `idées`≠`idees`, GitHub matche à la lettre.
+
+### Config requise (`.env`)
+- `GITHUB_TOKEN` — PAT (classic ou fine-grained), scope lecture Issues+Metadata.
+- `WATCHED_REPO` — `owner/nom` du repo surveillé (défaut `fgeronimi/ia-orchestrator`).
+- `DISCORD_WEBHOOK_URL` — webhook du canal `#orchestrateur` (les notifs du poller
+  passent par là, c'est un process hors-bot).
+
+### Lancer / observer
+```bash
+# manuel (Pi) :
+.venv/bin/python poll.py fgeronimi/ia-orchestrator
+# service : make install-timer   puis   journalctl -u orchestrator-poll -f
+# état DB :  sqlite3 state/orchestrator.db "SELECT * FROM issues_notifiees;"
+```
+
+### Limites connues (à traiter plus tard)
+- `poll.py` marque une issue notifiée **même si le webhook a échoué** (`notify`
+  loggue mais ne remonte pas de statut) → pas de re-tentative.
+- Pas de gestion de la pagination GitHub (`per_page=100`, suffisant au volume).
+- Retirer puis re-tagger une issue ne la re-notifie pas (déjà en base).
