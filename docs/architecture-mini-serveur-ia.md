@@ -157,6 +157,7 @@ ia-orchestrator/
 | `make remote-logs` / `remote-status` | logs et état du Pi via SSH |
 | `make env-pull` / `env-push` | récupère/envoie le `.env` (sauvegarde horodatée avant écrasement, restart après push) |
 | `make env-diff` | compare les **clés** des deux `.env` — jamais les valeurs |
+| `make remote-poll` / `remote-conso` | déclenche un tour de poll / affiche la conso Claude par ticket |
 
 **Prérequis SSH (une fois) :** les cibles distantes passent par
 `fgeronimi@ia-orchestrator.home`. Le user est explicite dans le Makefile
@@ -171,6 +172,7 @@ il est bloqué sur le Mac (voir §1).
 | `make sync` | pull, rebase, push, restart si code changé |
 | `make pull` / `push` / `restart` / `status` / `logs` / `test` | opérations unitaires |
 | `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min) |
+| `make poll` / `conso` | tour de poll à la main / conso Claude par ticket (tokens, coût) |
 
 ### Poller GitHub (`orchestrator-poll.timer` → `poll.py`)
 Toutes les 5 min, `poll.py`, pour **chaque repo** de `data/repos.yaml`

@@ -9,6 +9,7 @@ est un process unique (timer oneshot), pas de concurrence en écriture.
 """
 
 import sqlite3
+import time
 from pathlib import Path
 
 DB = Path(__file__).parent.parent / "state" / "orchestrator.db"
@@ -49,6 +50,24 @@ def _connexion() -> sqlite3.Connection:
         "  PRIMARY KEY (repo, sha)"
         ")"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conso_claude ("  # conso tokens par appel Claude
+        "  repo TEXT NOT NULL,"
+        "  numero INTEGER NOT NULL,"  # numéro du ticket (issue)
+        "  etape TEXT NOT NULL,"      # implementation | auto-review | revision
+        "  tokens_entree INTEGER NOT NULL,"
+        "  tokens_cache INTEGER NOT NULL,"
+        "  tokens_sortie INTEGER NOT NULL,"
+        "  cout_usd REAL NOT NULL,"
+        "  le TEXT NOT NULL DEFAULT (datetime('now'))"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS meta ("  # clé/valeur (ex: quota_jusqua)
+        "  cle TEXT PRIMARY KEY,"
+        "  valeur TEXT NOT NULL"
+        ")"
+    )
     return conn
 
 
@@ -67,6 +86,38 @@ def marquer_notifiee(repo: str, numero: int) -> None:
             "INSERT OR IGNORE INTO issues_notifiees (repo, numero) VALUES (?, ?)",
             (repo, numero),
         )
+
+
+def enregistrer_conso(repo: str, numero: int, etape: str,
+                      entree: int, cache: int, sortie: int, cout: float) -> None:
+    """Trace la conso d'un appel Claude, rattachée à un ticket et une étape."""
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT INTO conso_claude"
+            "  (repo, numero, etape, tokens_entree, tokens_cache, tokens_sortie, cout_usd)"
+            "  VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (repo, numero, etape, entree, cache, sortie, cout),
+        )
+
+
+def bloquer_quota(jusqua_epoch: int) -> None:
+    """Mémorise que le quota Claude est épuisé jusqu'à cette date (epoch)."""
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (cle, valeur) VALUES ('quota_jusqua', ?)",
+            (str(jusqua_epoch),),
+        )
+
+
+def quota_bloque_jusqua() -> int | None:
+    """Epoch de reprise si le quota est encore bloqué, sinon None."""
+    with _connexion() as conn:
+        cur = conn.execute("SELECT valeur FROM meta WHERE cle = 'quota_jusqua'")
+        ligne = cur.fetchone()
+    if ligne is None:
+        return None
+    jusqua = int(ligne[0])
+    return jusqua if jusqua > time.time() else None
 
 
 def pr_deja_suivie(repo: str, numero: int) -> bool:
