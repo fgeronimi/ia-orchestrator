@@ -7,9 +7,12 @@ réel du système, environnement, état des pipelines, reste à faire).
 ## Ce qu'est ce projet
 
 Orchestrateur d'agents Claude Code tournant sur un Raspberry Pi 4, piloté par
-Discord (pipeline dev) et par un endpoint HTTP appelé depuis un raccourci iOS
-(pipeline perso). Deux services systemd tournent en autonomie : `orchestrator-bot`
-(bot.py) et `orchestrator-server` (server.py).
+Discord et (à venir) par GitHub : tu crées des tickets, l'orchestrateur les
+implémente, ouvre des PR et gère la suite. Deux services systemd tournent en
+autonomie : `orchestrator-bot` (bot.py) et `orchestrator-server` (server.py).
+
+**Cap actuel : construction du pipeline dev GitHub — voir
+`docs/plan-orchestrateur-dev.md`.**
 
 ## Environnement
 
@@ -24,33 +27,30 @@ Discord (pipeline dev) et par un endpoint HTTP appelé depuis un raccourci iOS
    `server.py`. Toute la logique vit dans `pipelines/*.py`.
 2. **Tout appel à Claude passe par `lib/claude.run_claude()`** — jamais de
    subprocess `claude` ailleurs. Scoper les droits via `allowed_tools`
-   (`["Read"]` pour la vision, `[]` pour du raisonnement pur).
+   (`[]` pour du raisonnement pur, `["Read","Edit","Write","Bash"]` pour un
+   agent qui code dans un workspace).
 3. **Toute notification passe par `lib/notify.notify()`** — jamais de post Discord
    en dur.
-4. **Un pipeline = un fichier** exposant `async def handle(text, message) -> str`
-   et/ou `async def handle_image(image_path) -> str`. L'enregistrer dans le dict
-   `PIPELINES` de `bot.py` avec le **nom exact** du canal Discord
+4. **Un pipeline = un fichier** dans `pipelines/`, exposant un point d'entrée
+   `async def handle(...) -> str`. Pour un pipeline Discord, l'enregistrer dans
+   le dict `PIPELINES` de `bot.py` avec le **nom exact** du canal
    (minuscules, sans accent — `idées` ≠ `idees`).
 5. **Secrets uniquement via `.env`** (jamais en clair, jamais commités). Tout
    nouveau secret → l'ajouter à `.env.example` (clé sans valeur) pour le documenter.
 6. **Cloisonnement des droits au niveau des tokens**, pas en multipliant les process.
-7. **La liste des restos passe par `lib/restos.py`** (`data/restos.json`) — jamais
-   d'écriture directe dans le fichier. Deux process y touchent (bot + server) ;
-   le module gère le verrou, la dédup et les filtres.
 
 ## Après modification de code
 
 Les services ne rechargent pas à chaud. Après édition :
 ```bash
-sudo systemctl restart orchestrator-bot      # si bot.py / pipelines dev
-sudo systemctl restart orchestrator-server   # si server.py / pipeline perso
+sudo systemctl restart orchestrator-bot      # si bot.py / pipelines Discord
+sudo systemctl restart orchestrator-server   # si server.py
 journalctl -u <service> -f                    # vérifier les logs
 ```
 
 ## Ne pas supposer
 
-- `lib/jira.py` et `lib/github.py` **n'existent pas encore** (prévus, pas créés).
-- `lib/gcal.py` est un **stub** qui lève `NotImplementedError`.
+- `lib/github.py` **n'existe pas encore** (à créer en phase 0 du plan dev).
 - Ne pas ajouter Redis, queue, ou multi-agents sans besoin avéré (voir la
   section "Reste à faire" du doc d'archi).
 

@@ -18,7 +18,7 @@ SERVICES := orchestrator-bot orchestrator-server
 HORODATAGE := $(shell date +%Y%m%d-%H%M%S)
 
 .DEFAULT_GOAL := help
-.PHONY: help sync pull push restart status logs test install-timer geocode carte \
+.PHONY: help sync pull push restart status logs test install-timer \
         deploy remote-logs remote-status env-pull env-push env-diff
 
 help: ## Affiche cette aide
@@ -31,16 +31,14 @@ help: ## Affiche cette aide
 
 # ---------------------------------------------------------------- sur le Pi
 
-sync: ## Committe data/, rebase, pousse, redémarre si le code a changé
+sync: ## Auto-update : pull, rebase, redémarre si le code a changé
 	@bash infra/sync.sh
 
 pull: ## Récupère le code et redémarre les services
 	@git pull --rebase --autostash
 	@$(MAKE) restart
 
-push: ## Committe les données produites par le Pi et pousse
-	@git add data/ && git diff --cached --quiet \
-		|| git commit -q -m "data: sync manuel $(HORODATAGE)"
+push: ## Pousse d'éventuelles modifs faites sur le Pi
 	@git push
 
 restart: ## Redémarre les deux services
@@ -53,18 +51,9 @@ status: ## État des services
 logs: ## Suit les logs des deux services (Ctrl-C pour sortir)
 	@journalctl -u orchestrator-bot -u orchestrator-server -f
 
-test: ## Vérifie que les modules importent et que le store répond
-	@$(PYTHON) -c "import bot, server, lib.restos, pipelines.perso_miamiton" \
+test: ## Vérifie que les modules importent
+	@$(PYTHON) -c "import bot, server, pipelines.dev_jira, lib.claude, lib.notify" \
 		&& echo "imports OK"
-	@$(PYTHON) -c "from lib import restos; \
-		l = restos.charger(); \
-		print(f'store OK : {len(l)} restos, {sum(1 for r in l if r[\"statut\"]==\"a_faire\")} à faire')"
-
-geocode: ## Complète les coordonnées manquantes (Nominatim, 1 req/s)
-	@$(PYTHON) -m lib.geo
-
-carte: ## Affiche l'URL de la carte (token lu dans .env)
-	@echo "http://$(PI_HOST):5000/carte?t=$$(grep '^IOS_SHORTCUT_TOKEN=' .env | cut -d= -f2)"
 
 install-timer: ## Installe le timer de synchronisation git (toutes les 10 min)
 	@sudo cp infra/systemd/orchestrator-sync.service infra/systemd/orchestrator-sync.timer \

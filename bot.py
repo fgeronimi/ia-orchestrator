@@ -15,7 +15,7 @@ import discord
 from dotenv import load_dotenv
 
 from lib import notify
-from pipelines import dev_jira, perso_miamiton
+from pipelines import dev_jira
 
 load_dotenv()
 
@@ -26,7 +26,6 @@ NOTIFY_CHANNEL_ID = int(os.environ.get("NOTIFY_CHANNEL_ID", "0"))
 # Chaque handler : async def handle(text: str, message) -> str
 PIPELINES = {
     "idees": dev_jira.handle,
-    "miamiton": perso_miamiton.handle,
 }
 
 intents = discord.Intents.default()

@@ -3,12 +3,8 @@
 .env.*
 !.env.example
 
-# État local (runtime : images reçues, marqueurs, bases)
+# État local (runtime : marqueurs, bases SQLite, workspaces clonés)
 state/
-
-# Verrou et écriture atomique du store restos
-data/*.lock
-data/*.tmp
 
 # Python
 __pycache__/
