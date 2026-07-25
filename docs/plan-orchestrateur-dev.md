@@ -12,7 +12,7 @@
 | **Phase 0** — poller (lecture GitHub → notif Discord, dédup) | ✅ **fait & déployé** |
 | **Phase 1** — l'exécutant (issue → code → PR draft + auto-review) | ✅ **fait & validé live** (1a, 1b, 1c, auto-review) |
 | **Phase 2** — suite après merge (nettoyage + boucle de révision) | ✅ **fait & validé live** |
-| **Phase 3** — élargissement (multi-repos, CI, review affinée) | 🚧 **quasi fait** — multi-repos ✅ + checklist review ✅ validés live ; CI : code ✅, workflow en attente de push (scope PAT `workflow` requis) |
+| **Phase 3** — élargissement (multi-repos, CI, review affinée) | ✅ **fait & validé live** |
 
 **Ce qui tourne aujourd'hui :** un timer systemd (`orchestrator-poll`) lance
 `poll.py` toutes les 5 min sur le Pi ; il lit les issues taggées `ai-ready` du
@@ -194,7 +194,7 @@ ticket à la fois.
   lourde par tour, même verrou). Validé live sur la PR #6 (issue #5) :
   commentaire → correction exacte → repush + réponse.
 
-### Phase 3 — Élargissement 🚧 quasi fait
+### Phase 3 — Élargissement ✅ FAIT & validé live
 - *Multi-repos* ✅ **validé live** : `data/repos.yaml` (clé `repos`) liste les
   repos surveillés ; `WATCHED_REPO` en secours, argument CLI prioritaire.
   `poll.py` balaye tous les repos (notifs, followup, CI) puis lance UNE action
@@ -203,13 +203,15 @@ ticket à la fois.
 - *Review affinée* ✅ **validée live** : checklist dans le prompt d'auto-review
   (bugs, sécurité, fidélité au ticket, conventions, tests) — validée sur la
   PR #8 (elle a relevé un vrai écart doc/sudoers).
-- *CI GitHub Actions* : `dev_followup.surveiller_ci()` ✅ notifie le résultat
-  des check runs des PR d'agent (une fois par sha, un repush relance le
-  suivi ; silencieux sans CI ; dédup `state.ci_notifiee`). ⚠️ Le workflow
-  `.github/workflows/ci.yml` (make test sur PR et main) est **committé
-  localement mais pas poussé** : GitHub exige le scope `workflow` sur le PAT
-  (celui du Mac ne l'a pas ; le PAT fine-grained du Pi n'a pas la permission
-  Workflows non plus). Une fois le scope ajouté : `git push`.
+- *CI GitHub Actions* ✅ **validée live** : `.github/workflows/ci.yml` lance
+  `make test` (imports de tous les modules) sur chaque PR et sur `main`.
+  `dev_followup.surveiller_ci()` notifie le résultat des check runs des PR
+  d'agent (une fois par sha, un repush relance le suivi ; silencieux sans
+  CI ; dédup `state.ci_notifiee`). Validé sur la PR #8 (révision → repush →
+  CI → notif « ✅ CI verte »). Pièges vécus : pousser un workflow exige le
+  scope PAT `workflow` (ajouté au PAT du Mac le 2026-07-25) ; et la première
+  CI a été rouge — `bot.py` lisait `DISCORD_BOT_TOKEN` à l'import (le `.env`
+  local masquait le problème), lecture déplacée dans le bloc `__main__`.
 - *Garde-fous* : décision sandbox en §5 (timeout conservé, systemd-run
   reporté). `main` protégée et push limité aux branches `ai/*` inchangés.
 
@@ -236,11 +238,12 @@ ticket à la fois.
 
 ## 6. Prochaine action
 
-Finir la Phase 3 : ajouter le scope `workflow` au PAT du Mac
-(github.com/settings/tokens) puis `git push` du commit local
-`.github/workflows/ci.yml`, et valider en live la notif CI sur une PR
-d'agent. Ensuite : config par repo dans `repos.yaml` (tests, déploiement)
-quand un second repo sera surveillé.
+Les phases 0 à 3 sont faites : le pipeline vit en autonomie. La suite se
+décide à l'usage :
+- config par repo dans `repos.yaml` (tests, déploiement) quand un second
+  repo sera surveillé ;
+- sandbox des tests (`systemd-run --scope`, §5) avant tout repo tiers ;
+- retirer/recycler `pipelines/dev_jira.py` (legacy d'avant le pivot).
 
 ---
 

@@ -2,7 +2,7 @@
 
 > Document de référence, tenu à jour pour servir de contexte Claude Code.
 > Reflète l'état **réellement déployé**, pas seulement l'intention.
-> Dernière mise à jour : 2026-07-25 (Phases 1 et 2 du pipeline dev GitHub validées live).
+> Dernière mise à jour : 2026-07-25 (Phases 0 à 3 du pipeline dev GitHub validées live).
 
 ---
 
@@ -73,11 +73,12 @@ phases 0→3, implémentation actuelle).
   `dev_executor.reviser()` — Claude corrige sur la branche, repush, répond
   sur la PR. Révision prioritaire sur nouveau ticket, une action lourde par
   tour. Validé live : PR #4 nettoyée, PR #6 révisée sur commentaire.
-- **Phase 3 🚧 quasi faite** : multi-repos via `data/repos.yaml` ✅ (poll
-  balaye tous les repos, une action lourde par tour tous repos confondus) ;
-  auto-review à checklist ✅ ; surveillance CI des PR d'agent ✅ côté code
-  (`dev_followup.surveiller_ci`, notif ✅/❌ une fois par sha) — le workflow
-  `.github/workflows/ci.yml` attend un push avec le scope PAT `workflow`.
+- **Phase 3 ✅ faite & validée live** : multi-repos via `data/repos.yaml`
+  (poll balaye tous les repos, une action lourde par tour tous repos
+  confondus) ; auto-review à checklist ; CI GitHub Actions
+  (`.github/workflows/ci.yml` : `make test` sur PR et main) avec
+  surveillance des PR d'agent (`dev_followup.surveiller_ci`, notif ✅/❌ une
+  fois par sha, repush → nouveau suivi). Validé sur la PR #8.
 
 ### `pipelines/dev_jira.py` — ⚠️ legacy, à retirer/recycler
 Pipeline Discord « idée → brouillon de ticket » (Claude reformule une idée en
