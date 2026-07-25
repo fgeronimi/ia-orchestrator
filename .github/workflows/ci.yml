@@ -1,0 +1,20 @@
+# CI minimale : vérifie que tous les modules importent (make test).
+# Tourne sur les PR (dont celles de l'agent, branches ai/*) et sur main.
+# Le poller notifie le résultat des check runs des PR d'agent sur Discord.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install discord.py python-dotenv requests flask pyyaml
+      - run: make test
