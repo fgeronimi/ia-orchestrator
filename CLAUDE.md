@@ -83,9 +83,11 @@ journalctl -u <service> -f                    # vérifier les logs
 
 ## Skills du projet (`.claude/skills/`)
 
-Importés de `repo-de-skills` (plugin skills-dev) le 2026-07-25, adaptés au projet :
-- **`/brutal-reviewer`** — review senior sans complaisance, à utiliser pour
-  relire un changement de ce repo avant commit important.
-- **`/commit`** — commit au format Conventional Commits, footer `Refs: #<n>`
-  dérivé des branches `ai/<n>`. Les règles « Git & commits » ci-dessus restent
-  prioritaires (identité perso, pas de co-author).
+Importés de `repo-de-skills` (plugin skills-dev) le 2026-07-25, adaptés au projet et
+préfixés `bakaa-` :
+- **`/bakaa-brutal-reviewer`** — review senior sans complaisance, à utiliser
+  pour relire un changement de ce repo avant commit important. L'auto-review
+  de l'orchestrateur lit aussi sa grille (prompt de `dev_executor`).
+- **`/bakaa-commit`** — commit au format Conventional Commits, footer
+  `Refs: #<n>` dérivé des branches `ai/<n>`. Les règles « Git & commits »
+  ci-dessus restent prioritaires (identité perso, pas de co-author).
