@@ -63,6 +63,12 @@ def creer_branche(path: Path, branche: str) -> None:
     _git(path, "checkout", "-B", branche)
 
 
+def basculer_sur(path: Path, repo: str, branche: str) -> None:
+    """Se place sur une branche qui existe déjà sur le remote (révision de PR)."""
+    _git(path, "fetch", _url(repo), branche)
+    _git(path, "checkout", "-B", branche, "FETCH_HEAD")
+
+
 def commit_tout(path: Path, message: str) -> bool:
     """Commit tous les changements. Retourne False si rien à committer."""
     _git(path, "add", "-A")
