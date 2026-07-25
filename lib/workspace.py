@@ -73,6 +73,11 @@ def commit_tout(path: Path, message: str) -> bool:
     return True
 
 
+def diff_contre(path: Path, base: str) -> str:
+    """Diff de la branche courante contre la base (pour l'auto-review)."""
+    return _git(path, "diff", f"{base}...HEAD")
+
+
 def pousser(path: Path, repo: str, branche: str) -> None:
     # force : la branche ai/<n> appartient à l'agent, on la réécrit sans risque.
     _git(path, "push", "-f", _url(repo), f"{branche}:{branche}")
