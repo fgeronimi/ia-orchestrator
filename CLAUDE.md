@@ -53,9 +53,8 @@ journalctl -u <service> -f                    # vérifier les logs
 - Committer **uniquement** avec l'identité perso `Francois Geronimi
   <geronimi.francois@gmail.com>` et **SANS** ligne `Co-Authored-By: Claude`.
   Le `git config` local du repo est déjà réglé sur cet email — ne pas le remettre
-  sur l'email pro (la machine, poste pro, a un git global pro qui sinon
-  attribue les commits au mauvais compte GitHub). Historique déjà réécrit dans ce
-  sens le 2026-07-25.
+  sur l'email pro (la machine a un git global pro qui sinon attribue les commits
+  au mauvais compte GitHub). Historique déjà réécrit dans ce sens le 2026-07-25.
 - Messages au format **Conventional Commits** (règle du 2026-07-25, méthode
   détaillée dans `/bakaa-commit`) : `type(scope): description`, description en
   français, footer `Refs: #<n>` si la branche est `ai/<n>`. Types usuels :
@@ -89,8 +88,7 @@ journalctl -u <service> -f                    # vérifier les logs
 
 ## Skills du projet (`.claude/skills/`)
 
-Importés de `repo-de-skills` (plugin skills-dev) le 2026-07-25, adaptés au projet et
-préfixés `bakaa-` :
+Skills du projet, préfixés `bakaa-` :
 - **`/bakaa-brutal-reviewer`** — review senior sans complaisance, à utiliser
   pour relire un changement de ce repo avant commit important. L'auto-review
   de l'orchestrateur lit aussi sa grille (prompt de `dev_executor`).

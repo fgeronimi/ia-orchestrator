@@ -30,18 +30,16 @@ aucune logique métier ; toute la logique vit dans `pipelines/*.py`.
 | OS | Raspberry Pi OS Lite 64-bit (Debian, kernel 6.18 aarch64) |
 | User | `fgeronimi` |
 | Hostname LAN | `ia-orchestrator.home` (SSH local) |
-| IP Tailscale | `<ip-tailscale>` (accès distant — ⚠️ non installé sur le Mac, bloqué par la politique du poste) |
-| Compte Tailscale | `<compte>` |
+| Accès distant | Tailscale installé sur le Pi (`tailscale ip` pour l'adresse) |
 | Node | v20 LTS via nvm (`~/.nvm/versions/node/`) |
 | Python | venv à `~/ia-orchestrator/.venv` |
 | Projet | `~/ia-orchestrator` |
 | Repo | GitHub `fgeronimi/ia-orchestrator` (push HTTPS + PAT, credential.helper store) |
 | Auth Claude | `CLAUDE_CODE_OAUTH_TOKEN` (abonnement, pas d'API key) |
 
-Accès distant : Tailscale est installé **sur le Pi**. Sur le Mac il est bloqué
-par le politique du poste (`politique du poste`) — le
-dev distant depuis le Mac passe donc par le LAN (`ia-orchestrator.home`).
-Raspberry Pi Connect dispo en secours (shell navigateur).
+Accès distant : Tailscale est installé **sur le Pi** ; le dev depuis le Mac
+passe par le LAN (`ia-orchestrator.home`). Raspberry Pi Connect dispo en
+secours (shell navigateur).
 
 ---
 
@@ -167,8 +165,8 @@ ia-orchestrator/
 (`PI_USER`) — sans lui, ssh tente le login du Mac (`francois.geronimi`) et le Pi
 répond `Permission denied (publickey)`. Déposer la clé : `ssh-copy-id
 fgeronimi@ia-orchestrator.home`. Bloc `Host ia-orchestrator*` dans
-`~/.ssh/config` (Mac) pour le trousseau. Hors LAN, Tailscale serait requis mais
-il est bloqué sur le Mac (voir §1).
+`~/.ssh/config` (Mac) pour le trousseau. Hors LAN : passer par l'IP Tailscale
+du Pi (`make deploy PI_HOST=<ip-tailscale>`).
 
 | Sur le Pi | Effet |
 |---|---|

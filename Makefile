@@ -4,7 +4,7 @@
 #   - LOCAL  : à lancer sur le Pi (systemd, services, git)
 #   - DEPUIS LE MAC : passent par SSH/scp vers le Pi (préfixe remote-, env-, deploy)
 #
-# Le host du Pi est surchargeable :  make deploy PI_HOST=<ip-tailscale>
+# Le host du Pi est surchargeable :  make deploy PI_HOST=<ip-tailscale-du-pi>
 # (utile hors du LAN : passer par l'IP Tailscale)
 
 # Le user est explicite : sans lui, ssh utilise le login du Mac (francois.geronimi)
