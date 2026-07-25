@@ -73,8 +73,11 @@ phases 0→3, implémentation actuelle).
   `dev_executor.reviser()` — Claude corrige sur la branche, repush, répond
   sur la PR. Révision prioritaire sur nouveau ticket, une action lourde par
   tour. Validé live : PR #4 nettoyée, PR #6 révisée sur commentaire.
-- **Phase 3 ⬜ prochaine** : élargissement (multi-repos via `repos.yaml`,
-  statut CI, garde-fous supplémentaires).
+- **Phase 3 🚧 quasi faite** : multi-repos via `data/repos.yaml` ✅ (poll
+  balaye tous les repos, une action lourde par tour tous repos confondus) ;
+  auto-review à checklist ✅ ; surveillance CI des PR d'agent ✅ côté code
+  (`dev_followup.surveiller_ci`, notif ✅/❌ une fois par sha) — le workflow
+  `.github/workflows/ci.yml` attend un push avec le scope PAT `workflow`.
 
 ### `pipelines/dev_jira.py` — ⚠️ legacy, à retirer/recycler
 Pipeline Discord « idée → brouillon de ticket » (Claude reformule une idée en
@@ -94,7 +97,9 @@ ia-orchestrator/
 ├── .env / .env.example        # .env NON versionné (chmod 600)
 ├── bot.py                     # routeur Discord (mention → pipeline mappé par nom de canal)
 ├── server.py                  # endpoint Flask /health (port 5000)
-├── poll.py                    # ✅ poller : issues ai-ready → notif + exécution (1 ticket/tour, verrou)
+├── poll.py                    # ✅ poller multi-repos : notifs + followup + CI + 1 action lourde/tour
+├── data/
+│   └── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
 ├── pipelines/
 │   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR draft + auto-review + révision
 │   ├── dev_followup.py        # ✅ suite après merge : nettoyage branche/label des PR mergées
@@ -170,13 +175,14 @@ il est bloqué sur le Mac (voir §1).
 | `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min) |
 
 ### Poller GitHub (`orchestrator-poll.timer` → `poll.py`)
-Toutes les 5 min, `poll.py` : notifie les **nouvelles** issues `ai-ready`
-(dédup SQLite, `state/orchestrator.db`), nettoie les PR d'agent mergées
-(`dev_followup`), puis lance **une action lourde** sous verrou
-(`state/executor.lock`) — révision d'une PR commentée (prioritaire) ou
-exécution de la première issue `ai-ready`. Un run peut donc durer plusieurs
-minutes (Claude implémente + auto-review). Détails et limites :
-`docs/plan-orchestrateur-dev.md` §4 et §7.
+Toutes les 5 min, `poll.py`, pour **chaque repo** de `data/repos.yaml`
+(secours : `WATCHED_REPO`) : notifie les **nouvelles** issues `ai-ready`
+(dédup SQLite, `state/orchestrator.db`), nettoie les PR d'agent mergées et
+suit leur CI (`dev_followup`), puis lance **une action lourde** tous repos
+confondus sous verrou (`state/executor.lock`) — révision d'une PR commentée
+(prioritaire) ou exécution de la première issue `ai-ready`. Un run peut donc
+durer plusieurs minutes (Claude implémente + auto-review). Détails et
+limites : `docs/plan-orchestrateur-dev.md` §4 et §7.
 ```bash
 journalctl -u orchestrator-poll -f                         # logs du poller
 .venv/bin/python poll.py fgeronimi/ia-orchestrator         # un tour à la main
@@ -231,7 +237,7 @@ vécu : PATH node ajouté au repo mais unité installée jamais rafraîchie →
 | `DISCORD_WEBHOOK_URL` | notif hors-bot (timers, poller) → `#orchestrateur` | ✅ |
 | `CLAUDE_CODE_OAUTH_TOKEN` | auth Claude Code | ✅ |
 | `GITHUB_TOKEN` | poller GitHub (PAT, lecture Issues+Metadata) | ✅ |
-| `WATCHED_REPO` | repo surveillé `owner/nom` (défaut `fgeronimi/ia-orchestrator`) | ✅ |
+| `WATCHED_REPO` | repo surveillé `owner/nom` — secours si `data/repos.yaml` absent | ✅ |
 
 ---
 
