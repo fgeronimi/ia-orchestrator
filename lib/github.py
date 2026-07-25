@@ -81,6 +81,18 @@ def get_default_branch(repo: str) -> str:
     return _get(f"/repos/{repo}")["default_branch"]
 
 
+def get_issue(repo: str, numero: int) -> dict:
+    """Issue complète, avec son corps (title, body, labels, url)."""
+    i = _get(f"/repos/{repo}/issues/{numero}")
+    return {
+        "number": i["number"],
+        "title": i["title"],
+        "body": i.get("body") or "",
+        "labels": [lbl["name"] for lbl in i["labels"]],
+        "url": i["html_url"],
+    }
+
+
 def add_labels(repo: str, numero: int, labels: list[str]) -> None:
     _request("POST", f"/repos/{repo}/issues/{numero}/labels", {"labels": labels})
 
@@ -96,6 +108,14 @@ def remove_label(repo: str, numero: int, label: str) -> None:
 
 def comment_issue(repo: str, numero: int, body: str) -> dict:
     return _request("POST", f"/repos/{repo}/issues/{numero}/comments", {"body": body})
+
+
+def find_open_pull(repo: str, head_branch: str) -> dict | None:
+    """PR ouverte pour cette branche head, ou None."""
+    owner = repo.split("/")[0]
+    prs = _get(f"/repos/{repo}/pulls",
+               {"head": f"{owner}:{head_branch}", "state": "open"})
+    return prs[0] if prs else None
 
 
 def create_pull(repo: str, head: str, base: str, title: str, body: str,
