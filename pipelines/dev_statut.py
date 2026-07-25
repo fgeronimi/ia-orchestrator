@@ -53,7 +53,7 @@ async def handle(text: str, message) -> str:
     if "conso" in demande:
         return _conso()
     if "statut" in demande or "status" in demande or "état" in demande:
-        repos = charger_repos()
+        repos = [e["repo"] for e in charger_repos()]
         if not repos:
             return "Aucun repo surveillé (data/repos.yaml vide et WATCHED_REPO absent)."
         return "\n\n".join(f"__{repo}__\n{_statut(repo)}" for repo in repos)

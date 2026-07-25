@@ -155,10 +155,11 @@ async def _auto_review(repo: str, path, base: str, n: int, titre: str, pr: dict)
         await notify.notify(f"⚠️ #{n} : auto-review échouée (PR #{pr['number']} ouverte) — {exc}")
 
 
-async def executer(repo: str, issue: dict) -> None:
+async def executer(repo: str, issue: dict, timeout: int | None = None) -> None:
     n = issue["number"]
     titre = issue["title"]
     branche = f"ai/{n}"
+    timeout = timeout or 600  # surchageable par repo (data/repos.yaml)
 
     try:
         await notify.notify(f"🎫 #{n} pris en charge — {titre}")
@@ -177,7 +178,7 @@ async def executer(repo: str, issue: dict) -> None:
             PROMPT_IMPL.format(n=n, titre=titre, corps=corps or "(pas de description)"),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
-            timeout=600,
+            timeout=timeout,
         )
         conso = _tracer_conso(repo, n, "implementation", resultat)
         resume = resultat.texte
@@ -257,7 +258,8 @@ def chercher_revision(repo: str) -> tuple[dict, list[dict]] | None:
     return None
 
 
-async def reviser(repo: str, pr: dict, commentaires: list[dict]) -> None:
+async def reviser(repo: str, pr: dict, commentaires: list[dict],
+                  timeout: int | None = None) -> None:
     """Applique les commentaires de review d'une PR d'agent et repush.
 
     Les commentaires ne sont marqués vus qu'après succès : un échec (timeout
@@ -266,6 +268,7 @@ async def reviser(repo: str, pr: dict, commentaires: list[dict]) -> None:
     num_pr = pr["number"]
     branche = pr["head"]
     n = int(branche.removeprefix(BRANCHE_PREFIX))
+    timeout = timeout or 600
 
     try:
         await notify.notify(
@@ -283,7 +286,7 @@ async def reviser(repo: str, pr: dict, commentaires: list[dict]) -> None:
             PROMPT_REVISION.format(pr=num_pr, n=n, titre=pr["title"], commentaires=texte),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
-            timeout=600,
+            timeout=timeout,
         )
         conso = _tracer_conso(repo, n, "revision", resultat)
         resume = resultat.texte
@@ -318,7 +321,8 @@ async def reviser(repo: str, pr: dict, commentaires: list[dict]) -> None:
 
 # --- Phase 3+ : réparation de CI rouge -------------------------------------
 
-async def corriger_ci(repo: str, pr: dict, echecs: list[dict], log: str) -> None:
+async def corriger_ci(repo: str, pr: dict, echecs: list[dict], log: str,
+                      timeout: int | None = None) -> None:
     """Tente de réparer la CI rouge d'une PR d'agent (détectée par
     dev_followup.chercher_ci_rouge) et repush.
 
@@ -344,7 +348,7 @@ async def corriger_ci(repo: str, pr: dict, echecs: list[dict], log: str) -> None
                              log=log or "(log indisponible)"),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
-            timeout=600,
+            timeout=timeout or 600,
         )
         conso = _tracer_conso(repo, n, "ci-fix", resultat)
 

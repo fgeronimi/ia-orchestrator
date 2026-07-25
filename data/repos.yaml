@@ -1,6 +1,13 @@
 # Repos surveillés par l'orchestrateur (un tour de poll les balaye tous).
+# Une entrée est soit 'owner/nom', soit un mapping avec config :
+#   - repo: owner/nom
+#     timeout: 900        # borne des appels Claude pour ce repo (défaut 600 s)
 # Sans ce fichier, poll.py retombe sur WATCHED_REPO du .env (un seul repo).
 # Le PAT (GITHUB_TOKEN) doit être scopé sur chaque repo listé.
-# Prévu pour accueillir la config par repo (tests, déploiement) au besoin.
 repos:
   - fgeronimi/ia-orchestrator
+  # À décommenter une fois le PAT étendu aux repos havre :
+  # - repo: fgeronimi/havre-data
+  #   timeout: 900
+  # - repo: fgeronimi/havre-app
+  #   timeout: 1200       # pnpm install d'un monorepo froid sur le Pi

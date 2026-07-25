@@ -43,20 +43,33 @@ VERROU = RACINE / "state" / "executor.lock"
 REPOS_YAML = RACINE / "data" / "repos.yaml"
 
 
-def charger_repos() -> list[str]:
-    """Repos surveillés : data/repos.yaml, sinon WATCHED_REPO du .env."""
+def charger_repos() -> list[dict]:
+    """Repos surveillés + config par repo, normalisés en dicts.
+
+    Une entrée de data/repos.yaml est soit une chaîne 'owner/nom', soit un
+    mapping {repo: 'owner/nom', timeout: <secondes>} — le timeout borne les
+    appels Claude de ce repo (défaut : celui de run_claude). Secours si le
+    yaml est absent : WATCHED_REPO du .env.
+    """
+    entrees: list = []
     if REPOS_YAML.exists():
         config = yaml.safe_load(REPOS_YAML.read_text()) or {}
-        if config.get("repos"):
-            return config["repos"]
-    repo = os.environ.get("WATCHED_REPO", "")
-    return [repo] if repo else []
+        entrees = config.get("repos") or []
+    if not entrees:
+        repo = os.environ.get("WATCHED_REPO", "")
+        entrees = [repo] if repo else []
+    return [
+        {"repo": e, "timeout": None} if isinstance(e, str)
+        else {"repo": e["repo"], "timeout": e.get("timeout")}
+        for e in entrees
+    ]
 
 
-async def poll(repos: list[str]) -> None:
-    a_faire: list[tuple[str, dict]] = []  # (repo, issue) candidats à l'exécution
+async def poll(repos: list[dict]) -> None:
+    a_faire: list[tuple[dict, dict]] = []  # (entrée repo, issue) candidats
 
-    for repo in repos:
+    for entree in repos:
+        repo = entree["repo"]
         issues = github.list_issues(repo, labels=LABEL)
         nouveaux = [i for i in issues if not state.deja_notifiee(repo, i["number"])]
 
@@ -74,7 +87,7 @@ async def poll(repos: list[str]) -> None:
         await dev_followup.traiter_merges(repo)
         await dev_followup.surveiller_ci(repo)
 
-        a_faire += [(repo, i) for i in issues]
+        a_faire += [(entree, i) for i in issues]
 
     # Quota Claude épuisé (mémorisé par l'exécutant) : notifs et suivi ont eu
     # lieu, mais on saute les actions lourdes jusqu'à la reprise, sans spammer.
@@ -86,19 +99,19 @@ async def poll(repos: list[str]) -> None:
 
     # Première PR d'agent avec de nouveaux commentaires, tous repos confondus.
     revision = None
-    for repo in repos:
-        trouvee = dev_executor.chercher_revision(repo)
+    for entree in repos:
+        trouvee = dev_executor.chercher_revision(entree["repo"])
         if trouvee is not None:
-            revision = (repo, *trouvee)
+            revision = (entree, *trouvee)
             break
 
     # À défaut, première PR d'agent dont la CI est rouge et réparable.
     ci_rouge = None
     if revision is None:
-        for repo in repos:
-            trouvee = await dev_followup.chercher_ci_rouge(repo)
+        for entree in repos:
+            trouvee = await dev_followup.chercher_ci_rouge(entree["repo"])
             if trouvee is not None:
-                ci_rouge = (repo, *trouvee)
+                ci_rouge = (entree, *trouvee)
                 break
 
     if not a_faire and revision is None and ci_rouge is None:
@@ -114,25 +127,30 @@ async def poll(repos: list[str]) -> None:
             print("[poll] exécutant déjà en cours (verrou pris), on repassera")
             return
         # Priorité : révision (débloquer ta review) > CI rouge (réparer
-        # l'existant) > nouveau ticket.
+        # l'existant) > nouveau ticket. Le timeout vient de l'entrée repo.
         if revision is not None:
-            repo, pr, commentaires = revision
-            print(f"[poll] révision de la PR {repo}#{pr['number']} "
+            entree, pr, commentaires = revision
+            print(f"[poll] révision de la PR {entree['repo']}#{pr['number']} "
                   f"({len(commentaires)} commentaire(s))")
-            await dev_executor.reviser(repo, pr, commentaires)
+            await dev_executor.reviser(entree["repo"], pr, commentaires,
+                                       timeout=entree["timeout"])
         elif ci_rouge is not None:
-            repo, pr, echecs, log = ci_rouge
-            print(f"[poll] correction CI de la PR {repo}#{pr['number']}")
-            await dev_executor.corriger_ci(repo, pr, echecs, log)
+            entree, pr, echecs, log = ci_rouge
+            print(f"[poll] correction CI de la PR {entree['repo']}#{pr['number']}")
+            await dev_executor.corriger_ci(entree["repo"], pr, echecs, log,
+                                           timeout=entree["timeout"])
         else:
-            repo, issue = a_faire[0]
-            print(f"[poll] exécution de {repo}#{issue['number']} {issue['title']}")
-            await dev_executor.executer(repo, issue)
+            entree, issue = a_faire[0]
+            print(f"[poll] exécution de {entree['repo']}#{issue['number']} {issue['title']}")
+            await dev_executor.executer(entree["repo"], issue, timeout=entree["timeout"])
 
 
 if __name__ == "__main__":
     load_dotenv()
-    repos = [sys.argv[1]] if len(sys.argv) > 1 else charger_repos()
+    if len(sys.argv) > 1:
+        repos = [{"repo": sys.argv[1], "timeout": None}]
+    else:
+        repos = charger_repos()
     if not repos:
         sys.exit("Usage : python poll.py [owner/repo]  "
                  "(ou data/repos.yaml, ou WATCHED_REPO)")
