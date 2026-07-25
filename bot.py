@@ -15,7 +15,6 @@ import discord
 from dotenv import load_dotenv
 
 from lib import notify
-from pipelines import dev_jira
 
 load_dotenv()
 
@@ -25,9 +24,9 @@ NOTIFY_CHANNEL_ID = int(os.environ.get("NOTIFY_CHANNEL_ID", "0"))
 
 # Mapping canal → handler de pipeline.
 # Chaque handler : async def handle(text: str, message) -> str
-PIPELINES = {
-    "idees": dev_jira.handle,
-}
+# Vide depuis le pivot GitHub (les tickets naissent dans GitHub, pas sur
+# Discord) : le bot ne sert plus qu'aux notifications via lib/notify.
+PIPELINES = {}
 
 intents = discord.Intents.default()
 intents.message_content = True

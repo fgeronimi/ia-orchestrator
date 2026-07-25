@@ -7,11 +7,11 @@ la suite après ton merge. Notifications sur Discord.
 - **Plan du pipeline dev (cap actuel)** : [`docs/plan-orchestrateur-dev.md`](docs/plan-orchestrateur-dev.md)
 - **Architecture & état réel** : [`docs/architecture-mini-serveur-ia.md`](docs/architecture-mini-serveur-ia.md)
 
-> État : pipeline dev GitHub **Phase 0 déployée** — un poller (`poll.py`, timer
-> 5 min) détecte les issues taggées `ai-ready` et les notifie sur Discord (dédup
-> SQLite). Phase 1 (l'exécutant : issue → code → PR) en cours. Le routeur Discord
-> (`bot.py`) et l'infra (auto-update, services systemd) sont en place.
-> `pipelines/dev_jira.py` est un vestige d'avant le pivot.
+> État : pipeline dev GitHub **complet et autonome (phases 0 à 3)** — un poller
+> (timer 5 min) détecte les issues `ai-ready` des repos surveillés
+> (`data/repos.yaml`), les implémente (PR draft + auto-review), révise sur tes
+> commentaires, surveille la CI, et nettoie après ton merge. Discord sert aux
+> notifications ; l'infra (auto-update, services systemd) est en place.
 
 ## Démarrage rapide (Pi ou VPS Debian)
 

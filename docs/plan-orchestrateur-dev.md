@@ -242,8 +242,9 @@ Les phases 0 à 3 sont faites : le pipeline vit en autonomie. La suite se
 décide à l'usage :
 - config par repo dans `repos.yaml` (tests, déploiement) quand un second
   repo sera surveillé ;
-- sandbox des tests (`systemd-run --scope`, §5) avant tout repo tiers ;
-- retirer/recycler `pipelines/dev_jira.py` (legacy d'avant le pivot).
+- sandbox des tests (`systemd-run --scope`, §5) avant tout repo tiers.
+
+(`pipelines/dev_jira.py`, legacy d'avant le pivot, retiré le 2026-07-25.)
 
 ---
 
