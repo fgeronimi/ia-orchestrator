@@ -18,8 +18,9 @@ SERVICES := orchestrator-bot orchestrator-server
 HORODATAGE := $(shell date +%Y%m%d-%H%M%S)
 
 .DEFAULT_GOAL := help
-.PHONY: help sync pull push restart status logs test poll install-timer \
-        deploy remote-logs remote-status remote-poll env-pull env-push env-diff
+.PHONY: help sync pull push restart status logs test poll conso install-timer \
+        deploy remote-logs remote-status remote-poll remote-conso \
+        env-pull env-push env-diff
 
 help: ## Affiche cette aide
 	@echo "Sur le Pi :"
@@ -61,6 +62,15 @@ test: ## Vérifie que les modules importent
 poll: ## Lance un tour du poller GitHub (WATCHED_REPO du .env) ; peut déclencher l'exécution réelle d'un ticket ai-ready
 	@$(PYTHON) poll.py
 
+conso: ## Conso Claude par ticket (tokens lus/générés, coût estimé)
+	@test -f state/orchestrator.db || { echo "Pas encore de données."; exit 0; }
+	@sqlite3 -column -header state/orchestrator.db \
+		"SELECT repo || '#' || numero AS ticket, COUNT(*) AS appels, \
+		 printf('%.0fk', SUM(tokens_entree + tokens_cache)/1000.0) AS lus, \
+		 printf('%.1fk', SUM(tokens_sortie)/1000.0) AS generes, \
+		 printf('%.2f $$', SUM(cout_usd)) AS cout \
+		 FROM conso_claude GROUP BY repo, numero ORDER BY MAX(le) DESC"
+
 install-timer: ## Installe les timers systemd (sync git + poll GitHub)
 	@sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
 	@sudo systemctl daemon-reload
@@ -81,6 +91,9 @@ remote-status: ## État des services du Pi depuis le Mac
 
 remote-poll: ## Déclenche un tour de poll GitHub sur le Pi depuis le Mac ; peut déclencher l'exécution réelle d'un ticket ai-ready
 	@ssh $(PI) 'sudo -n systemctl start orchestrator-poll.service'
+
+remote-conso: ## Conso Claude par ticket, lue sur le Pi depuis le Mac
+	@ssh $(PI) 'cd $(PI_DIR) && make conso'
 
 env-diff: ## Compare les CLÉS du .env local et du Pi (jamais les valeurs)
 	@ssh $(PI) 'grep -oE "^[A-Z_]+=" $(PI_DIR)/.env | sort' > /tmp/env-pi.keys

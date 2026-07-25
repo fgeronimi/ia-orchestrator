@@ -27,6 +27,7 @@ import asyncio
 import fcntl
 import os
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -73,6 +74,14 @@ async def poll(repos: list[str]) -> None:
         await dev_followup.surveiller_ci(repo)
 
         a_faire += [(repo, i) for i in issues]
+
+    # Quota Claude épuisé (mémorisé par l'exécutant) : notifs et suivi ont eu
+    # lieu, mais on saute les actions lourdes jusqu'à la reprise, sans spammer.
+    reprise = state.quota_bloque_jusqua()
+    if reprise is not None:
+        print("[poll] quota Claude épuisé — action lourde sautée, reprise vers "
+              + time.strftime("%H:%M", time.localtime(reprise)))
+        return
 
     # Première PR d'agent avec de nouveaux commentaires, tous repos confondus.
     revision = None

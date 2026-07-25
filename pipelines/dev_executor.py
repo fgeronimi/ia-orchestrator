@@ -21,8 +21,11 @@ Usage manuel (test live d'un ticket) :
     .venv/bin/python -m pipelines.dev_executor fgeronimi/ia-orchestrator 1
 """
 
+import time
+from datetime import datetime
+
 from lib import github, notify, state, workspace
-from lib.claude import run_claude
+from lib.claude import ClaudeQuotaError, ResultatClaude, run_claude
 
 LABEL_READY = "ai-ready"
 LABEL_WORKING = "ai-working"
@@ -85,6 +88,25 @@ Consignes :
 # Au-delà, le diff est tronqué dans le prompt (l'agent Read complète au besoin).
 DIFF_MAX = 40_000
 
+# Sans heure de reprise annoncée par le CLI, on retente au bout de 30 min.
+QUOTA_ATTENTE_DEFAUT = 30 * 60
+
+
+def _tracer_conso(repo: str, n: int, etape: str, r: ResultatClaude) -> str:
+    """Enregistre la conso d'un appel et retourne son résumé pour les notifs."""
+    state.enregistrer_conso(repo, n, etape, r.tokens_entree, r.tokens_cache,
+                            r.tokens_sortie, r.cout_usd)
+    lus = (r.tokens_entree + r.tokens_cache) / 1000
+    return f"🪙 {etape} : {lus:.0f}k lus / {r.tokens_sortie/1000:.1f}k générés (~{r.cout_usd:.2f} $)"
+
+
+def _bloquer_quota(exc: ClaudeQuotaError) -> str:
+    """Mémorise le blocage (le poller saute les actions lourdes jusqu'à la
+    reprise, sans spammer) et retourne l'heure de reprise pour la notif."""
+    reprise = exc.reset_epoch or int(time.time()) + QUOTA_ATTENTE_DEFAUT
+    state.bloquer_quota(reprise)
+    return datetime.fromtimestamp(reprise).strftime("%H:%M")
+
 
 async def _auto_review(repo: str, path, base: str, n: int, titre: str, pr: dict) -> None:
     """Relecture du diff par Claude (lecture seule), postée en commentaire de PR.
@@ -95,15 +117,20 @@ async def _auto_review(repo: str, path, base: str, n: int, titre: str, pr: dict)
         diff = workspace.diff_contre(path, base)
         if len(diff) > DIFF_MAX:
             diff = diff[:DIFF_MAX] + "\n[… diff tronqué …]"
-        review = await run_claude(
+        resultat = await run_claude(
             PROMPT_REVIEW.format(n=n, titre=titre, base=base, diff=diff),
             cwd=str(path),
             allowed_tools=["Read"],
             timeout=300,
         )
+        conso = _tracer_conso(repo, n, "auto-review", resultat)
         # comment_issue marche pour les PR : même endpoint issues/commentaires.
-        github.comment_issue(repo, pr["number"], f"🤖 **Auto-review**\n\n{review}")
-        await notify.notify(f"🧐 #{n} : auto-review postée sur la PR #{pr['number']}")
+        github.comment_issue(repo, pr["number"], f"🤖 **Auto-review**\n\n{resultat.texte}")
+        await notify.notify(f"🧐 #{n} : auto-review postée sur la PR #{pr['number']}\n{conso}")
+    except ClaudeQuotaError as exc:
+        reprise = _bloquer_quota(exc)
+        await notify.notify(f"⏳ #{n} : {exc} — auto-review sautée (PR #{pr['number']} "
+                            f"ouverte), reprise des actions vers {reprise}")
     except Exception as exc:
         await notify.notify(f"⚠️ #{n} : auto-review échouée (PR #{pr['number']} ouverte) — {exc}")
 
@@ -125,15 +152,17 @@ async def executer(repo: str, issue: dict) -> None:
         # --- Increment 1b : Claude implémente le ticket -------------------
         corps = github.get_issue(repo, n)["body"]
         await notify.notify(f"🔨 #{n} : implémentation par Claude…")
-        resume = await run_claude(
+        resultat = await run_claude(
             PROMPT_IMPL.format(n=n, titre=titre, corps=corps or "(pas de description)"),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
             timeout=600,
         )
+        conso = _tracer_conso(repo, n, "implementation", resultat)
+        resume = resultat.texte
 
         if not workspace.commit_tout(path, f"ai: #{n} {titre}"):
-            await notify.notify(f"🤷 #{n} : Claude n'a produit aucune modification")
+            await notify.notify(f"🤷 #{n} : Claude n'a produit aucune modification\n{conso}")
             return
         workspace.pousser(path, repo, branche)
 
@@ -147,12 +176,18 @@ async def executer(repo: str, issue: dict) -> None:
                 draft=True,
             )
             github.comment_issue(repo, n, f"🤖 PR ouverte : {pr['html_url']}")
-            await notify.notify(f"🔍 #{n} : PR draft ouverte → {pr['html_url']}")
+            await notify.notify(f"🔍 #{n} : PR draft ouverte → {pr['html_url']}\n{conso}")
         else:
-            await notify.notify(f"🔄 #{n} : PR #{pr['number']} mise à jour → {pr['html_url']}")
+            await notify.notify(f"🔄 #{n} : PR #{pr['number']} mise à jour → {pr['html_url']}\n{conso}")
 
         await _auto_review(repo, path, base, n, titre, pr)
 
+    except ClaudeQuotaError as exc:
+        # Ticket remis en file : il sera repris quand le quota reviendra.
+        github.add_labels(repo, n, [LABEL_READY])
+        github.remove_label(repo, n, LABEL_WORKING)
+        reprise = _bloquer_quota(exc)
+        await notify.notify(f"⏳ #{n} : {exc} — ticket remis en file, reprise vers {reprise}")
     except Exception as exc:
         await notify.notify(f"⚠️ #{n} : échec de l'exécutant — {exc}")
         raise
@@ -209,27 +244,34 @@ async def reviser(repo: str, pr: dict, commentaires: list[dict]) -> None:
             f"- {c['body']}" + (f"\n  (sur le fichier {c['path']})" if c.get("path") else "")
             for c in commentaires
         )
-        resume = await run_claude(
+        resultat = await run_claude(
             PROMPT_REVISION.format(pr=num_pr, n=n, titre=pr["title"], commentaires=texte),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
             timeout=600,
         )
+        conso = _tracer_conso(repo, n, "revision", resultat)
+        resume = resultat.texte
 
         if workspace.commit_tout(path, f"ai: #{n} révision (PR #{num_pr})"):
             workspace.pousser(path, repo, branche)
             github.comment_issue(repo, num_pr, f"🤖 Commentaires pris en compte.\n\n{resume}")
-            await notify.notify(f"✏️ #{n} : commentaires pris en compte, repush → {pr['html_url']}")
+            await notify.notify(f"✏️ #{n} : commentaires pris en compte, repush → "
+                                f"{pr['html_url']}\n{conso}")
         else:
             github.comment_issue(
                 repo, num_pr,
                 f"🤖 Commentaires lus mais aucune modification produite.\n\n{resume}",
             )
-            await notify.notify(f"🤷 #{n} : révision sans modification (voir la PR)")
+            await notify.notify(f"🤷 #{n} : révision sans modification (voir la PR)\n{conso}")
 
         for c in commentaires:
             state.marquer_commentaire(repo, c["cle"])
 
+    except ClaudeQuotaError as exc:
+        # Commentaires non marqués vus : la révision repartira avec le quota.
+        reprise = _bloquer_quota(exc)
+        await notify.notify(f"⏳ PR #{num_pr} : {exc} — révision reportée vers {reprise}")
     except Exception as exc:
         await notify.notify(f"⚠️ PR #{num_pr} : échec de la révision — {exc}")
         raise

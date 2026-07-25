@@ -215,6 +215,21 @@ ticket à la fois.
 - *Garde-fous* : décision sandbox en §5 (timeout conservé, systemd-run
   reporté). `main` protégée et push limité aux branches `ai/*` inchangés.
 
+### Robustesse & conso (ajouts du 2026-07-25)
+- **Quota Claude épuisé** : `run_claude` détecte la limite d'usage du CLI
+  (« usage limit reached|<epoch> ») et lève `ClaudeQuotaError` avec l'heure de
+  reprise si annoncée. L'exécutant remet alors le ticket en file (`ai-ready`
+  reposé, `ai-working` retiré) ; une révision interrompue repart seule (les
+  commentaires ne sont marqués vus qu'après succès). Le blocage est mémorisé
+  (`state.meta`, clé `quota_jusqua`, 30 min par défaut) : le poller continue
+  notifs/followup/CI mais saute les actions lourdes jusqu'à la reprise — une
+  seule notif ⏳, pas de spam toutes les 5 min.
+- **Conso de tokens par ticket** : chaque appel Claude (étapes
+  `implementation`, `auto-review`, `revision`) est tracé dans SQLite
+  (`conso_claude` : tokens entrée/cache/sortie + coût estimé du CLI). Les
+  notifs Discord de chaque étape portent un résumé 🪙 ; `make conso` (Pi) ou
+  `make remote-conso` (Mac) affichent le tableau agrégé par ticket.
+
 ---
 
 ## 5. Points de vigilance
