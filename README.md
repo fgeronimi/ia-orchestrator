@@ -32,6 +32,7 @@ le Mac). Les plus courantes :
 ```bash
 make deploy          # (Mac) push le code + met le Pi à jour
 make remote-logs     # (Mac) suit les logs du Pi
+make env-push        # (Mac) envoie le .env local vers le Pi et redémarre les services
 make status / logs   # (Pi) état et logs des services
 make install-timer   # (Pi) installe les timers auto-update + poller GitHub
 ```
