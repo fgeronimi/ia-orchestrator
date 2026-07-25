@@ -319,6 +319,31 @@ async def reviser(repo: str, pr: dict, commentaires: list[dict],
                             f"Commentaires abandonnés : re-commente la PR pour retenter.")
 
 
+# --- Review à la demande (label ai-review sur une PR humaine) ---------------
+
+LABEL_REVIEW = "ai-review"
+
+
+async def reviewer_pr(repo: str, pr: dict) -> None:
+    """Relit une PR écrite en local (grosse session Mac) et retire le label.
+
+    Réutilise l'auto-review (Read seul, l'étape la moins gourmande en quota).
+    Le label est retiré dans tous les cas pour ne pas boucler : si la review a
+    été sautée (quota) ou a échoué, la notif l'explique — reposer le label
+    relance.
+    """
+    num = pr["number"]
+    try:
+        base = github.get_default_branch(repo) if not pr.get("base") else pr["base"]
+        path = workspace.preparer(repo, base)
+        workspace.basculer_sur(path, repo, pr["head"])
+        await _auto_review(repo, path, base, num, pr["title"], pr)
+    except Exception as exc:
+        await notify.notify(f"⚠️ PR #{num} : review à la demande échouée — {exc}")
+    finally:
+        github.remove_label(repo, num, LABEL_REVIEW)
+
+
 # --- Phase 3+ : réparation de CI rouge -------------------------------------
 
 async def corriger_ci(repo: str, pr: dict, echecs: list[dict], log: str,

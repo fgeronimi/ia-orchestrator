@@ -10,8 +10,9 @@ Un tour, pour CHAQUE repo :
 puis UNE SEULE action lourde (Claude) tous repos confondus, sous verrou
 fichier, par ordre de priorité :
   1. nouveaux commentaires humains sur une PR d'agent → dev_executor.reviser
-  2. CI rouge réparable sur une PR d'agent → dev_executor.corriger_ci
-  3. première issue `ai-ready` → dev_executor.executer
+  2. PR humaine labellisée `ai-review` → dev_executor.reviewer_pr
+  3. CI rouge réparable sur une PR d'agent → dev_executor.corriger_ci
+  4. première issue `ai-ready` → dev_executor.executer
 
 Idempotence : l'exécutant pose `ai-working` (et retire `ai-ready`) dès la
 prise en charge ; commentaires, PR mergées et statuts CI traités sont
@@ -105,17 +106,27 @@ async def poll(repos: list[dict]) -> None:
             revision = (entree, *trouvee)
             break
 
+    # À défaut, première PR humaine dont la review est demandée (label ai-review).
+    review = None
+    if revision is None:
+        for entree in repos:
+            trouvee = dev_followup.chercher_review_demandee(entree["repo"])
+            if trouvee is not None:
+                review = (entree, trouvee)
+                break
+
     # À défaut, première PR d'agent dont la CI est rouge et réparable.
     ci_rouge = None
-    if revision is None:
+    if revision is None and review is None:
         for entree in repos:
             trouvee = await dev_followup.chercher_ci_rouge(entree["repo"])
             if trouvee is not None:
                 ci_rouge = (entree, *trouvee)
                 break
 
-    if not a_faire and revision is None and ci_rouge is None:
-        print(f"[poll] rien à traiter (ni issue '{LABEL}', ni révision, ni CI rouge)")
+    if not a_faire and revision is None and review is None and ci_rouge is None:
+        print(f"[poll] rien à traiter (ni issue '{LABEL}', ni révision, "
+              "ni review demandée, ni CI rouge)")
         return
 
     # --- Une action lourde par tour, sous verrou -----------------------------
@@ -134,6 +145,10 @@ async def poll(repos: list[dict]) -> None:
                   f"({len(commentaires)} commentaire(s))")
             await dev_executor.reviser(entree["repo"], pr, commentaires,
                                        timeout=entree["timeout"])
+        elif review is not None:
+            entree, pr = review
+            print(f"[poll] review demandée sur la PR {entree['repo']}#{pr['number']}")
+            await dev_executor.reviewer_pr(entree["repo"], pr)
         elif ci_rouge is not None:
             entree, pr, echecs, log = ci_rouge
             print(f"[poll] correction CI de la PR {entree['repo']}#{pr['number']}")

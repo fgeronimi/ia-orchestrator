@@ -261,6 +261,12 @@ ticket à la fois.
   Restent sous contrôle humain : les labels (collaborateurs seuls) — sur un
   repo public, ne labelliser `ai-ready` que des issues relues (le corps
   devient un prompt). Historique scanné : aucun secret jamais commité.
+- **Review à la demande** (2026-07-25) : le quota Claude de l'abonnement est
+  limité — les **grosses sessions se font en local** (Mac) et poussent des
+  PR ; poser le label **`ai-review`** sur une PR fait relire son diff par le
+  Pi (auto-review, Read seul — l'étape la moins gourmande) qui poste le
+  commentaire et retire le label. Priorité des actions lourdes : révision >
+  review demandée > CI rouge > nouveau ticket. Jamais les PR de forks.
 - **Suivi depuis Discord** (2026-07-25) : `pipelines/dev_statut.py`, branché
   sur le canal `#orchestrateur` (dict `PIPELINES` de `bot.py`) — `@bot conso`
   (tableau par ticket) et `@bot statut` (tickets en file/en cours/en échec,

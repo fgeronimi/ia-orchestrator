@@ -27,6 +27,7 @@ from lib import github, notify, state
 
 BRANCHE_PREFIX = "ai/"
 LABEL_WORKING = "ai-working"
+LABEL_REVIEW = "ai-review"  # review à la demande d'une PR humaine
 MAX_TENTATIVES_CI = 2
 LOG_MAX = 4_000  # extrait de fin de log passé dans le prompt
 
@@ -79,6 +80,20 @@ async def surveiller_ci(repo: str) -> None:
             await notify.notify(f"✅ CI verte — PR #{pr['number']}")
         print(f"[followup] CI de la PR #{pr['number']} : "
               f"{'rouge' if echecs else 'verte'} ({pr['sha'][:7]})")
+
+
+def chercher_review_demandee(repo: str) -> dict | None:
+    """Première PR ouverte portant le label `ai-review`.
+
+    Usage : les grosses sessions se font en local (quota du Pi préservé) et
+    poussent des PR ; poser `ai-review` fait relire le diff par le Pi
+    (dev_executor.reviewer_pr), qui retire le label après coup. Jamais les
+    PR de forks.
+    """
+    for pr in github.list_pulls(repo, state="open"):
+        if LABEL_REVIEW in pr["labels"] and pr["head_repo"] == repo:
+            return pr
+    return None
 
 
 def _queue_de_log(brut: str) -> str:
