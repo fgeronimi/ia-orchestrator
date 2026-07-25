@@ -58,7 +58,7 @@ test: ## Vérifie que les modules importent
 		pipelines.dev_followup, pipelines.dev_jira, lib.claude, lib.github, \
 		lib.notify, lib.state, lib.workspace" && echo "imports OK"
 
-poll: ## Lance un tour du poller GitHub (WATCHED_REPO du .env)
+poll: ## Lance un tour du poller GitHub (WATCHED_REPO du .env) ; peut déclencher l'exécution réelle d'un ticket ai-ready
 	@$(PYTHON) poll.py
 
 install-timer: ## Installe les timers systemd (sync git + poll GitHub)
@@ -79,7 +79,7 @@ remote-logs: ## Suit les logs du Pi depuis le Mac
 remote-status: ## État des services du Pi depuis le Mac
 	@ssh $(PI) 'cd $(PI_DIR) && make status'
 
-remote-poll: ## Déclenche un tour de poll GitHub sur le Pi depuis le Mac
+remote-poll: ## Déclenche un tour de poll GitHub sur le Pi depuis le Mac ; peut déclencher l'exécution réelle d'un ticket ai-ready
 	@ssh $(PI) 'sudo -n systemctl start orchestrator-poll.service'
 
 env-diff: ## Compare les CLÉS du .env local et du Pi (jamais les valeurs)
