@@ -12,7 +12,7 @@
 | **Phase 0** — poller (lecture GitHub → notif Discord, dédup) | ✅ **fait & déployé** |
 | **Phase 1** — l'exécutant (issue → code → PR draft + auto-review) | ✅ **fait & validé live** (1a, 1b, 1c, auto-review) |
 | **Phase 2** — suite après merge (nettoyage + boucle de révision) | ✅ **fait & validé live** |
-| Phase 3 — élargissement (multi-repos, CI, garde-fous, repos.yaml) | ⬜ à venir |
+| **Phase 3** — élargissement (multi-repos, CI, review affinée) | 🚧 **quasi fait** — multi-repos ✅ + checklist review ✅ validés live ; CI : code ✅, workflow en attente de push (scope PAT `workflow` requis) |
 
 **Ce qui tourne aujourd'hui :** un timer systemd (`orchestrator-poll`) lance
 `poll.py` toutes les 5 min sur le Pi ; il lit les issues taggées `ai-ready` du
@@ -72,7 +72,7 @@ Les pipelines actuels sont **one-shot sans état**. Ici, trois nouveautés :
 | `poll.py` + `infra/poll.sh` + `orchestrator-poll.timer` | boucle de polling → notif | ✅ fait |
 | `pipelines/dev_executor.py` | l'exécutant : issue → code → PR + auto-review | ✅ fait |
 | `state/workspaces/<repo>/` | clones des repos surveillés où Claude code (`lib/workspace`) | ✅ fait |
-| `data/repos.yaml` | repos surveillés + config par repo (tests, déploiement) | ⬜ Phase 3 |
+| `data/repos.yaml` | repos surveillés (liste ; config par repo au besoin) | ✅ fait |
 | `lib/github.py` (écriture : branches, PR, commentaires) | Phase 1 | ✅ fait |
 
 > `lib/github.py` et le poller sont **développables et testables en local depuis
@@ -194,9 +194,24 @@ ticket à la fois.
   lourde par tour, même verrou). Validé live sur la PR #6 (issue #5) :
   commentaire → correction exacte → repush + réponse.
 
-### Phase 3 — Élargissement
-Plusieurs repos, review plus fine (checklist, diff-aware), intégration CI
-concrète (statut GitHub Actions), garde-fous supplémentaires.
+### Phase 3 — Élargissement 🚧 quasi fait
+- *Multi-repos* ✅ **validé live** : `data/repos.yaml` (clé `repos`) liste les
+  repos surveillés ; `WATCHED_REPO` en secours, argument CLI prioritaire.
+  `poll.py` balaye tous les repos (notifs, followup, CI) puis lance UNE action
+  lourde tous repos confondus (révision prioritaire, même verrou). Le PAT doit
+  être scopé sur chaque repo listé. Dépendance `pyyaml` (setup.sh).
+- *Review affinée* ✅ **validée live** : checklist dans le prompt d'auto-review
+  (bugs, sécurité, fidélité au ticket, conventions, tests) — validée sur la
+  PR #8 (elle a relevé un vrai écart doc/sudoers).
+- *CI GitHub Actions* : `dev_followup.surveiller_ci()` ✅ notifie le résultat
+  des check runs des PR d'agent (une fois par sha, un repush relance le
+  suivi ; silencieux sans CI ; dédup `state.ci_notifiee`). ⚠️ Le workflow
+  `.github/workflows/ci.yml` (make test sur PR et main) est **committé
+  localement mais pas poussé** : GitHub exige le scope `workflow` sur le PAT
+  (celui du Mac ne l'a pas ; le PAT fine-grained du Pi n'a pas la permission
+  Workflows non plus). Une fois le scope ajouté : `git push`.
+- *Garde-fous* : décision sandbox en §5 (timeout conservé, systemd-run
+  reporté). `main` protégée et push limité aux branches `ai/*` inchangés.
 
 ---
 
@@ -221,10 +236,11 @@ concrète (statut GitHub Actions), garde-fous supplémentaires.
 
 ## 6. Prochaine action
 
-**Phase 3 — élargissement** : plusieurs repos surveillés (`data/repos.yaml` :
-tests, déploiement par repo), review plus fine (checklist, diff-aware),
-intégration CI concrète (statut GitHub Actions), garde-fous supplémentaires
-(sandbox des tests type `systemd-run --scope`). Voir §4 et §5.
+Finir la Phase 3 : ajouter le scope `workflow` au PAT du Mac
+(github.com/settings/tokens) puis `git push` du commit local
+`.github/workflows/ci.yml`, et valider en live la notif CI sur une PR
+d'agent. Ensuite : config par repo dans `repos.yaml` (tests, déploiement)
+quand un second repo sera surveillé.
 
 ---
 
