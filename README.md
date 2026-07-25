@@ -204,3 +204,7 @@ Le ticket qui a ajouté l'endpoint `/conso` de ce repo, déroulé réel :
   annoncée, une seule notif.
 - Conso visible partout (notifs, `make conso`, `/conso`, `@bot conso`) — pas
   de coût silencieux.
+
+## Licence
+
+[MIT](LICENSE).
