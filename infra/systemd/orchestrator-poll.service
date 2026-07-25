@@ -17,7 +17,7 @@ WorkingDirectory=/home/fgeronimi/ia-orchestrator
 EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
 # node en dur (nvm absent du contexte systemd) : l'exécutant appelle `claude`.
 # Ajuster si la version de Node change (ls ~/.nvm/versions/node/).
-Environment=PATH=/home/fgeronimi/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/fgeronimi/.nvm/versions/node/v22.23.1/bin:/home/fgeronimi/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/bin/bash /home/fgeronimi/ia-orchestrator/infra/poll.sh
 
 PrivateTmp=true

@@ -31,7 +31,7 @@ aucune logique métier ; toute la logique vit dans `pipelines/*.py`.
 | User | `fgeronimi` |
 | Hostname LAN | `ia-orchestrator.home` (SSH local) |
 | Accès distant | Tailscale installé sur le Pi (`tailscale ip` pour l'adresse) |
-| Node | v20 LTS via nvm (`~/.nvm/versions/node/`) |
+| Node | v22 LTS via nvm (`~/.nvm/versions/node/`) |
 | Python | venv à `~/ia-orchestrator/.venv` |
 | Projet | `~/ia-orchestrator` |
 | Repo | GitHub `fgeronimi/ia-orchestrator` (push HTTPS + PAT, credential.helper store) |

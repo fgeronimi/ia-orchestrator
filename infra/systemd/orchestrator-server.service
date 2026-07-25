@@ -15,7 +15,7 @@ Type=simple
 User=fgeronimi
 WorkingDirectory=/home/fgeronimi/ia-orchestrator
 EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
-Environment=PATH=/home/fgeronimi/.nvm/versions/node/v20.19.0/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/fgeronimi/.nvm/versions/node/v22.23.1/bin:/home/fgeronimi/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/fgeronimi/ia-orchestrator/.venv/bin/python server.py
 Restart=on-failure
 RestartSec=10
