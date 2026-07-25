@@ -1,0 +1,15 @@
+# Déclenche orchestrator-poll.service toutes les 5 minutes.
+# Installation :  make install-timer
+# État :          systemctl list-timers orchestrator-poll
+
+[Unit]
+Description=Orchestrateur IA - poll GitHub toutes les 5 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

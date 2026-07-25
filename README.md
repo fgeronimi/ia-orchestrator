@@ -7,10 +7,11 @@ la suite après ton merge. Notifications sur Discord.
 - **Plan du pipeline dev (cap actuel)** : [`docs/plan-orchestrateur-dev.md`](docs/plan-orchestrateur-dev.md)
 - **Architecture & état réel** : [`docs/architecture-mini-serveur-ia.md`](docs/architecture-mini-serveur-ia.md)
 
-> État : le pipeline dev GitHub est **en construction** (voir le plan). Le
-> routeur Discord (`bot.py`) et l'infra (auto-update, services systemd) sont en
-> place. `pipelines/dev_jira.py` est un vestige d'avant le pivot (à retirer ou
-> recycler).
+> État : pipeline dev GitHub **Phase 0 déployée** — un poller (`poll.py`, timer
+> 5 min) détecte les issues taggées `ai-ready` et les notifie sur Discord (dédup
+> SQLite). Phase 1 (l'exécutant : issue → code → PR) en cours. Le routeur Discord
+> (`bot.py`) et l'infra (auto-update, services systemd) sont en place.
+> `pipelines/dev_jira.py` est un vestige d'avant le pivot.
 
 ## Démarrage rapide (Pi ou VPS Debian)
 
@@ -32,7 +33,12 @@ le Mac). Les plus courantes :
 make deploy          # (Mac) push le code + met le Pi à jour
 make remote-logs     # (Mac) suit les logs du Pi
 make status / logs   # (Pi) état et logs des services
+make install-timer   # (Pi) installe les timers auto-update + poller GitHub
 ```
+
+Le poller GitHub tourne toutes les 5 min (`orchestrator-poll.timer` → `poll.py`) :
+il notifie sur Discord les issues taggées `ai-ready`. Suivi :
+`journalctl -u orchestrator-poll -f`.
 
 Le Pi se met à jour tout seul : un push sur `main` est récupéré et les services
 redémarrés dans les 10 min (`infra/sync.sh` + `orchestrator-sync.timer`).

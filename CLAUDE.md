@@ -50,7 +50,10 @@ journalctl -u <service> -f                    # vérifier les logs
 
 ## Ne pas supposer
 
-- `lib/github.py` **n'existe pas encore** (à créer en phase 0 du plan dev).
+- `lib/github.py` existe mais est en **lecture seule** (Phase 0). L'écriture
+  (branches, PR, commentaires) est à créer en Phase 1.
+- Label déclencheur = **`ai-ready`** (anglais), pas `ia-ready`. GitHub matche à
+  la lettre (piège vécu, cf `idées`≠`idees`).
 - Ne pas ajouter Redis, queue, ou multi-agents sans besoin avéré (voir la
   section "Reste à faire" du doc d'archi).
 
