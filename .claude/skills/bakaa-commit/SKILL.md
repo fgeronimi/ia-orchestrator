@@ -1,5 +1,5 @@
 ---
-name: commit
+name: bakaa-commit
 description: >
   Create a git commit using the Conventional Commits specification. Use when the developer asks to: commit changes,
   create a commit, stage and commit, write a commit message, or make a conventional commit. Triggers on "commit",

@@ -60,7 +60,8 @@ Diff de la PR (contre {base}) :
 {diff}
 ```
 
-Passe le diff au crible de cette checklist :
+Si `.claude/skills/bakaa-brutal-reviewer/SKILL.md` existe dans le repo, lis-le et
+applique sa grille de lecture (sans complaisance) en plus de la checklist :
 1. Bugs : cas limites, erreurs non gérées, effets de bord hors du scope.
 2. Sécurité : secret en clair, injection (shell/SQL), entrée non validée.
 3. Fidélité au ticket : tout est couvert, rien en trop.

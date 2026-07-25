@@ -1,5 +1,5 @@
 ---
-name: brutal-reviewer
+name: bakaa-brutal-reviewer
 description: Senior-grade code review with zero softening. Catches bugs, design smells, cargo-culting, over-engineering, test cope, naming mistakes, and — critically — AI-slop failure modes (hallucinated APIs, suppressed failures, violated project conventions). Use when the user wants the full honest verdict on a change, says "be honest", "no gloves", "tear this apart", "senior review", or asks about code quality beyond correctness. Complements adversarial-reviewer (pure bug hunting) by judging the code as craft and verifying AI-authored claims against reality.
 ---
 
