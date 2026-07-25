@@ -34,7 +34,15 @@ async def notify(message: str) -> None:
 
     webhook = os.environ.get("DISCORD_WEBHOOK_URL")
     if webhook:
-        requests.post(webhook, json={"content": f"🔔 {message}"}, timeout=10)
+        # Ne pas avaler les échecs : un webhook invalide/tronqué renvoie un
+        # 4xx sans lever d'exception — sinon la notif est perdue en silence.
+        try:
+            r = requests.post(webhook, json={"content": f"🔔 {message}"}, timeout=10)
+            if r.status_code >= 300:
+                print(f"[notify] échec webhook Discord : HTTP {r.status_code} "
+                      f"{r.text[:200]}")
+        except requests.RequestException as exc:
+            print(f"[notify] webhook injoignable : {exc}")
         return
 
     # Dernier recours : au moins une trace dans les logs systemd
