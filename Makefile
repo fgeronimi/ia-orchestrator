@@ -18,7 +18,7 @@ SERVICES := orchestrator-bot orchestrator-server
 HORODATAGE := $(shell date +%Y%m%d-%H%M%S)
 
 .DEFAULT_GOAL := help
-.PHONY: help sync pull push restart status logs test install-timer \
+.PHONY: help sync pull push restart status logs test poll install-timer \
         deploy remote-logs remote-status env-pull env-push env-diff
 
 help: ## Affiche cette aide
@@ -56,6 +56,9 @@ logs: ## Suit les logs des deux services (Ctrl-C pour sortir)
 test: ## Vérifie que les modules importent
 	@$(PYTHON) -c "import bot, server, pipelines.dev_jira, lib.claude, lib.notify" \
 		&& echo "imports OK"
+
+poll: ## Lance un tour du poller GitHub (WATCHED_REPO du .env)
+	@$(PYTHON) poll.py
 
 install-timer: ## Installe les timers systemd (sync git + poll GitHub)
 	@sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
