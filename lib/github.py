@@ -124,3 +124,45 @@ def create_pull(repo: str, head: str, base: str, title: str, body: str,
     return _request("POST", f"/repos/{repo}/pulls", {
         "title": title, "head": head, "base": base, "body": body, "draft": draft,
     })
+
+
+# --- Phase 2 : suivi post-merge et boucle de révision
+
+def list_pulls(repo: str, state: str = "open") -> list[dict]:
+    """PR d'un repo, liste allégée. `merged_at` est None si non mergée."""
+    brut = _get(f"/repos/{repo}/pulls",
+                {"state": state, "per_page": 100, "sort": "updated", "direction": "desc"})
+    return [
+        {
+            "number": p["number"],
+            "title": p["title"],
+            "head": p["head"]["ref"],
+            "merged_at": p["merged_at"],
+            "html_url": p["html_url"],
+        }
+        for p in brut
+    ]
+
+
+def list_comments(repo: str, numero: int) -> list[dict]:
+    """Commentaires de conversation d'une issue ou PR (même endpoint)."""
+    brut = _get(f"/repos/{repo}/issues/{numero}/comments", {"per_page": 100})
+    return [{"id": c["id"], "body": c["body"], "user": c["user"]["login"]}
+            for c in brut]
+
+
+def list_review_comments(repo: str, numero: int) -> list[dict]:
+    """Commentaires de review posés sur le diff d'une PR (avec le fichier visé)."""
+    brut = _get(f"/repos/{repo}/pulls/{numero}/comments", {"per_page": 100})
+    return [{"id": c["id"], "body": c["body"], "user": c["user"]["login"],
+             "path": c.get("path")}
+            for c in brut]
+
+
+def delete_branch(repo: str, branche: str) -> None:
+    """Supprime une branche distante. Ignore le 422 (déjà supprimée)."""
+    try:
+        _request("DELETE", f"/repos/{repo}/git/refs/heads/{branche}")
+    except GitHubError as exc:
+        if "422" not in str(exc) and "404" not in str(exc):
+            raise

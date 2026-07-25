@@ -10,18 +10,26 @@ Flux pour une issue `ai-ready` :
   7. auto-review : Claude relit son diff (Read seul) → commentaire sur la PR
   8. notifie chaque étape
 
-Appelé par le poller (poll.py, un ticket par tour sous verrou) ; lancement
-manuel possible :
+Phase 2 — boucle de révision : chercher_revision() repère les nouveaux
+commentaires humains sur les PR d'agent ouvertes, reviser() les applique
+(Claude sur la branche de la PR) et repush. Dédup des commentaires en SQLite.
+
+Appelé par le poller (poll.py, une action lourde par tour sous verrou) ;
+lancement manuel possible :
 
 Usage manuel (test live d'un ticket) :
     .venv/bin/python -m pipelines.dev_executor fgeronimi/ia-orchestrator 1
 """
 
-from lib import github, notify, workspace
+from lib import github, notify, state, workspace
 from lib.claude import run_claude
 
 LABEL_READY = "ai-ready"
 LABEL_WORKING = "ai-working"
+BRANCHE_PREFIX = "ai/"
+# Les commentaires de l'orchestrateur partent avec le même PAT que l'humain
+# (même login) : le préfixe 🤖 est ce qui les distingue des vrais retours.
+PREFIX_BOT = "🤖"
 
 PROMPT_IMPL = """Tu es dans un dépôt git, sur une branche dédiée à ce ticket.
 Implémente-le, rien de plus.
@@ -53,6 +61,20 @@ Rédige directement le commentaire de review (markdown), en français, concis :
 - écarts avec le ticket ou les conventions du repo ;
 - termine par un verdict clair : « ✅ RAS » ou « ⚠️ points à vérifier avant merge ».
 Pas de préambule, pas de répétition du diff."""
+
+PROMPT_REVISION = """Tu es dans un dépôt git, sur la branche de la PR #{pr}
+(ticket #{n} : {titre}). Des commentaires de review demandent des corrections.
+Applique-les, rien de plus.
+
+Commentaires :
+{commentaires}
+
+Consignes :
+- Modifie directement les fichiers du dépôt courant.
+- Reste minimal et scopé aux commentaires. Respecte les conventions du repo.
+- Si tu repères des tests, lance-les et assure-toi qu'ils passent.
+- Ne touche pas à git (pas de commit/push) : l'orchestrateur s'en charge.
+- Termine par un résumé de 2-3 lignes de ce que tu as changé."""
 
 # Au-delà, le diff est tronqué dans le prompt (l'agent Read complète au besoin).
 DIFF_MAX = 40_000
@@ -127,6 +149,83 @@ async def executer(repo: str, issue: dict) -> None:
 
     except Exception as exc:
         await notify.notify(f"⚠️ #{n} : échec de l'exécutant — {exc}")
+        raise
+
+
+# --- Phase 2 : boucle de révision -----------------------------------------
+
+def chercher_revision(repo: str) -> tuple[dict, list[dict]] | None:
+    """Première PR d'agent ouverte ayant de nouveaux commentaires humains.
+
+    Balaye les PR ouvertes sur une branche ai/*, agrège commentaires de
+    conversation et commentaires de diff, écarte ceux de l'orchestrateur
+    (préfixe 🤖) et ceux déjà traités (state.commentaires_vus).
+    """
+    for pr in github.list_pulls(repo, state="open"):
+        if not pr["head"].startswith(BRANCHE_PREFIX):
+            continue
+        commentaires = []
+        for genre, liste in (
+            ("issue", github.list_comments(repo, pr["number"])),
+            ("review", github.list_review_comments(repo, pr["number"])),
+        ):
+            for c in liste:
+                cle = f"{genre}-{c['id']}"  # deux espaces d'ids distincts
+                if (c["body"] or "").startswith(PREFIX_BOT):
+                    continue
+                if state.commentaire_deja_vu(repo, cle):
+                    continue
+                commentaires.append({**c, "cle": cle})
+        if commentaires:
+            return pr, commentaires
+    return None
+
+
+async def reviser(repo: str, pr: dict, commentaires: list[dict]) -> None:
+    """Applique les commentaires de review d'une PR d'agent et repush.
+
+    Les commentaires ne sont marqués vus qu'après succès : un échec (timeout
+    Claude, push refusé) sera retenté au tour suivant.
+    """
+    num_pr = pr["number"]
+    branche = pr["head"]
+    n = int(branche.removeprefix(BRANCHE_PREFIX))
+
+    try:
+        await notify.notify(
+            f"✏️ PR #{num_pr} : révision demandée ({len(commentaires)} commentaire(s))"
+        )
+        base = github.get_default_branch(repo)
+        path = workspace.preparer(repo, base)
+        workspace.basculer_sur(path, repo, branche)
+
+        texte = "\n\n".join(
+            f"- {c['body']}" + (f"\n  (sur le fichier {c['path']})" if c.get("path") else "")
+            for c in commentaires
+        )
+        resume = await run_claude(
+            PROMPT_REVISION.format(pr=num_pr, n=n, titre=pr["title"], commentaires=texte),
+            cwd=str(path),
+            allowed_tools=["Read", "Edit", "Write", "Bash"],
+            timeout=600,
+        )
+
+        if workspace.commit_tout(path, f"ai: #{n} révision (PR #{num_pr})"):
+            workspace.pousser(path, repo, branche)
+            github.comment_issue(repo, num_pr, f"🤖 Commentaires pris en compte.\n\n{resume}")
+            await notify.notify(f"✏️ #{n} : commentaires pris en compte, repush → {pr['html_url']}")
+        else:
+            github.comment_issue(
+                repo, num_pr,
+                f"🤖 Commentaires lus mais aucune modification produite.\n\n{resume}",
+            )
+            await notify.notify(f"🤷 #{n} : révision sans modification (voir la PR)")
+
+        for c in commentaires:
+            state.marquer_commentaire(repo, c["cle"])
+
+    except Exception as exc:
+        await notify.notify(f"⚠️ PR #{num_pr} : échec de la révision — {exc}")
         raise
 
 
