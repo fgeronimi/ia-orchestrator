@@ -46,7 +46,9 @@ restart: ## Redémarre les deux services
 	@sleep 2 && $(MAKE) --no-print-directory status
 
 status: ## État des services
-	@systemctl is-active $(SERVICES) | paste -d' ' <(echo "$(SERVICES)" | tr ' ' '\n') -
+	@# boucle POSIX : make exécute les recettes avec /bin/sh (dash sur le Pi),
+	@# donc pas de process substitution bash <(...) ici.
+	@for s in $(SERVICES); do printf '%s: %s\n' "$$s" "$$(systemctl is-active $$s)"; done
 
 logs: ## Suit les logs des deux services (Ctrl-C pour sortir)
 	@journalctl -u orchestrator-bot -u orchestrator-server -f
