@@ -78,6 +78,12 @@ phases 0→3, implémentation actuelle).
   surveillance des PR d'agent (`dev_followup.surveiller_ci`, notif ✅/❌ une
   fois par sha, repush → nouveau suivi). Validé sur la PR #8.
 
+> **Repos surveillés** (`data/repos.yaml`) : `ia-orchestrator` (ce repo),
+> `havre-data` et `havre-app` (projet havre — assistant hyperacousie,
+> timeouts dédiés). Chaque repo surveillé documente dans son CLAUDE.md
+> (§0.1) les règles que les agents doivent y respecter ; le mode d'emploi
+> côté humain est dans leurs README (« Workflow de développement »).
+>
 > `pipelines/dev_jira.py` (idée Discord → brouillon de ticket, antérieur au
 > pivot) a été retiré le 2026-07-25 — récupérable dans l'historique git.
 > Côté Discord, le bot **notifie** (`lib/notify`) et répond aux requêtes de
