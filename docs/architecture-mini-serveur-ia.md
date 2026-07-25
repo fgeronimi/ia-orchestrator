@@ -47,22 +47,19 @@ Raspberry Pi Connect dispo en secours (shell navigateur).
 
 ## 2. État des pipelines
 
-### Pipeline Dev (idée → brouillon) — `pipelines/dev_jira.py` — ✅ v0
-```
-Discord #idees  ──@mention──▶  bot.py route vers dev_jira.handle
-                               └─ Claude génère un brouillon de ticket structuré
-                                  (titre, description, critères, verdict IA-ready)
-```
-- **État :** répond en direct dans Discord. Brouillon uniquement, rien n'est créé.
-- **À repositionner :** avec le pivot GitHub, ce pipeline devient soit « idée
-  Discord → issue GitHub créée » (rôle Créateur), soit retiré. À trancher au
-  démarrage du plan dev.
+### Pipeline Dev GitHub — 🚧 à construire — **cœur du projet**
+**Point d'entrée = les issues GitHub.** Tu écris tes tickets directement dans
+GitHub et tu les tagges `ai-ready` ; le Pi les implémente, ouvre des PR, se
+relit, et gère la suite après ton merge. Spécifié en détail dans
+**`docs/plan-orchestrateur-dev.md`** (décisions, briques, machine à états,
+phases 0→3). Rien n'est encore codé.
 
-### Pipeline Dev GitHub — 🚧 à construire
-Cœur du projet désormais. Tu crées des issues GitHub et les tagges ; le Pi les
-implémente et ouvre des PR. Spécifié en détail dans
-**`docs/plan-orchestrateur-dev.md`** (décisions, briques, phases). Rien n'est
-encore codé.
+### `pipelines/dev_jira.py` — ⚠️ legacy, à retirer/recycler
+Pipeline Discord « idée → brouillon de ticket » (Claude reformule une idée en
+titre/description/critères). Antérieur au pivot : comme les tickets viennent
+désormais **directement de GitHub**, ce flux n'est plus le point d'entrée. À
+supprimer, ou à recycler en « idée Discord → issue GitHub créée ». Discord garde
+son rôle de **notifications** (`lib/notify`).
 
 ---
 

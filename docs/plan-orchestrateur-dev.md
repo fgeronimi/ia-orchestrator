@@ -16,6 +16,10 @@
 | Autonomie | **PR en draft, merge humain** — rien n'atterrit sur `main` sans toi |
 | Notifications | **Discord** (`lib/notify` déjà en place) |
 
+**Point d'entrée = les issues GitHub.** Tu écris tes tickets directement dans
+GitHub et tu les tagges `ai-ready` ; l'orchestrateur ne crée pas de ticket, il
+les consomme. Pas de saisie via Discord ni ailleurs.
+
 Le principe fondateur ne change pas : Discord/HTTP = bus d'événements, un pipeline
 = un fichier, cloisonnement des droits **au niveau des tokens**.
 
