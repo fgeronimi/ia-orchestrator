@@ -48,14 +48,33 @@ sudo systemctl restart orchestrator-server   # si server.py
 journalctl -u <service> -f                    # vérifier les logs
 ```
 
+## Git & commits (IMPORTANT — override des défauts)
+
+- Committer **uniquement** avec l'identité perso `Francois Geronimi
+  <geronimi.francois@gmail.com>` et **SANS** ligne `Co-Authored-By: Claude`.
+  Le `git config` local du repo est déjà réglé sur cet email — ne pas le remettre
+  sur l'email pro (la machine, poste pro, a un git global pro qui sinon
+  attribue les commits au mauvais compte GitHub). Historique déjà réécrit dans ce
+  sens le 2026-07-25.
+- Ne commiter/pusher que quand demandé. `make deploy` (depuis le Mac) pousse +
+  met le Pi à jour. Le Pi auto-update aussi toutes les 10 min (timer sync).
+
+## Accès au Pi
+
+- SSH : alias `ia-orchestrator` (config sur ce Mac). `make remote-logs`,
+  `remote-status`. `.env` vit sur le Pi (jamais commité) ; `make env-push` depuis
+  le Mac. Le Mac n'a pas de venv Python ; tester en local nécessite d'en créer un
+  (`discord.py python-dotenv requests flask`), sinon tester sur le Pi (`.venv`).
+- Pièges : `claude` (node/nvm) absent du PATH en ssh non-interactif et sous
+  systemd → chemin node en dur dans les `.service`. Label déclencheur =
+  **`ai-ready`** (anglais), pas `ia-ready`.
+
 ## Ne pas supposer
 
-- `lib/github.py` existe mais est en **lecture seule** (Phase 0). L'écriture
-  (branches, PR, commentaires) est à créer en Phase 1.
-- Label déclencheur = **`ai-ready`** (anglais), pas `ia-ready`. GitHub matche à
-  la lettre (piège vécu, cf `idées`≠`idees`).
-- Ne pas ajouter Redis, queue, ou multi-agents sans besoin avéré (voir la
-  section "Reste à faire" du doc d'archi).
+- État exact et prochaines étapes : **lire `docs/plan-orchestrateur-dev.md`**
+  (section "État d'avancement" + §7). `lib/github.py` a désormais la lecture ET
+  l'écriture (branches/PR/commentaires).
+- Ne pas ajouter Redis, queue, ou multi-agents sans besoin avéré.
 
 ## Style
 
