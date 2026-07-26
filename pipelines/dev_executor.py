@@ -59,7 +59,7 @@ Diff de la PR (contre {base}) :
 ```diff
 {diff}
 ```
-
+{note_exclusions}
 Si `.claude/skills/bakaa-brutal-reviewer/SKILL.md` existe dans le repo, lis-le et
 applique sa grille de lecture (sans complaisance) en plus de la checklist :
 1. Bugs : cas limites, erreurs non gérées, effets de bord hors du scope.
@@ -139,11 +139,16 @@ async def _auto_review(repo: str, path, base: str, n: int, titre: str, pr: dict)
     Un échec ici ne fait pas échouer le run : la PR est déjà ouverte.
     """
     try:
-        diff = workspace.diff_contre(path, base)
+        diff, exclus = workspace.diff_filtre(path, base)
         if len(diff) > DIFF_MAX:
             diff = diff[:DIFF_MAX] + "\n[… diff tronqué …]"
+        note_exclusions = ""
+        if exclus:
+            liste = "\n".join(f"- {e}" for e in exclus)
+            note_exclusions = f"\nAssets exclus du diff (trop volumineux) :\n{liste}\n"
         resultat = await run_claude(
-            PROMPT_REVIEW.format(n=n, titre=titre, base=base, diff=diff),
+            PROMPT_REVIEW.format(n=n, titre=titre, base=base, diff=diff,
+                                 note_exclusions=note_exclusions),
             cwd=str(path),
             allowed_tools=["Read"],
             timeout=300,
