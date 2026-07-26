@@ -68,6 +68,11 @@ applique sa grille de lecture (sans complaisance) en plus de la checklist :
 4. Conventions du repo : CLAUDE.md, style des fichiers voisins.
 5. Tests : lancés ? auraient-ils dû l'être ?
 
+Tu es en LECTURE SEULE : tu ne peux pas exécuter les tests, le lint ni les
+types — c'est le rôle de la CI de la PR, qui les exécute systématiquement.
+Ne signale jamais que tu n'as pas pu les lancer ; concentre-toi sur ce que
+la CI ne voit pas (logique, contrats, sécurité, conventions).
+
 Rédige directement le commentaire de review (markdown), en français, concis :
 cite uniquement les points de la checklist qui méritent une remarque (tais les
 points RAS), et termine par un verdict clair : « ✅ RAS » ou « ⚠️ points à
@@ -248,8 +253,11 @@ def chercher_revision(repo: str) -> tuple[dict, list[dict]] | None:
                 cle = f"{genre}-{c['id']}"  # deux espaces d'ids distincts
                 if c["user"] != proprietaire:
                     continue
-                if (c["body"] or "").startswith(PREFIX_BOT):
+                corps = (c["body"] or "").strip()
+                if corps.startswith(PREFIX_BOT):
                     continue
+                if corps.startswith("/"):
+                    continue  # espace de noms des commandes (/ticket…) : pas une révision
                 if state.commentaire_deja_vu(repo, cle):
                     continue
                 commentaires.append({**c, "cle": cle})

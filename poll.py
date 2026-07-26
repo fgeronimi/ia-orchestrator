@@ -85,9 +85,10 @@ async def poll(repos: list[dict]) -> None:
             state.marquer_notifiee(repo, issue["number"])
             print(f"[poll] notifié {repo}#{issue['number']} {issue['title']}")
 
-        # --- Phase 2/3 : suivi post-merge et CI (API seulement, pas de Claude)
+        # --- Phase 2/3 : suivi post-merge, CI, commandes (API seulement)
         await dev_followup.traiter_merges(repo)
         await dev_followup.surveiller_ci(repo)
+        await dev_followup.traiter_commandes(repo)
 
         a_faire += [(entree, i) for i in issues]
 

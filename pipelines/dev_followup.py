@@ -82,6 +82,47 @@ async def surveiller_ci(repo: str) -> None:
               f"{'rouge' if echecs else 'verte'} ({pr['sha'][:7]})")
 
 
+COMMANDE_TICKET = "/ticket"
+
+
+async def traiter_commandes(repo: str) -> None:
+    """Commandes en commentaire de PR — v1 : `/ticket titre\\ncorps` crée l'issue.
+
+    Réservées au propriétaire du repo, sur toute PR ouverte du repo (agent ou
+    humaine, jamais un fork), commentaires de conversation uniquement.
+    L'issue est créée SANS label : poser `ai-ready` reste un geste humain.
+    Dédup partagée avec la révision (state.commentaires_vus) ; les
+    commentaires commençant par « / » ne déclenchent jamais de révision.
+    """
+    proprietaire = repo.split("/")[0]
+    for pr in github.list_pulls(repo, state="open"):
+        if pr["head_repo"] != repo:
+            continue
+        for c in github.list_comments(repo, pr["number"]):
+            corps_brut = (c["body"] or "").strip()
+            if c["user"] != proprietaire or not corps_brut.startswith(COMMANDE_TICKET):
+                continue
+            cle = f"issue-{c['id']}"
+            if state.commentaire_deja_vu(repo, cle):
+                continue
+
+            texte = corps_brut[len(COMMANDE_TICKET):].strip()
+            lignes = texte.splitlines() or [""]
+            titre = (lignes[0] or "").strip() or f"Ticket depuis la PR #{pr['number']}"
+            corps = "\n".join(lignes[1:]).strip()
+            corps = (f"{corps}\n\n" if corps else "") + (
+                f"_Créé par `{COMMANDE_TICKET}` depuis un commentaire de la "
+                f"PR #{pr['number']} : {pr['html_url']}_"
+            )
+            issue = github.create_issue(repo, titre, corps)
+            state.marquer_commentaire(repo, cle)
+            github.comment_issue(repo, pr["number"],
+                                 f"🤖 Ticket créé : #{issue['number']} — {issue['html_url']}")
+            await notify.notify(f"🎫 Ticket #{issue['number']} créé depuis la "
+                                f"PR #{pr['number']} : {titre}")
+            print(f"[followup] {COMMANDE_TICKET} → issue #{issue['number']} ({repo})")
+
+
 def chercher_review_demandee(repo: str) -> dict | None:
     """Première PR ouverte portant le label `ai-review`.
 

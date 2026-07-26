@@ -110,6 +110,14 @@ def comment_issue(repo: str, numero: int, body: str) -> dict:
     return _request("POST", f"/repos/{repo}/issues/{numero}/comments", {"body": body})
 
 
+def create_issue(repo: str, title: str, body: str,
+                 labels: list[str] | None = None) -> dict:
+    charge: dict = {"title": title, "body": body}
+    if labels:
+        charge["labels"] = labels
+    return _request("POST", f"/repos/{repo}/issues", charge)
+
+
 def find_open_pull(repo: str, head_branch: str) -> dict | None:
     """PR ouverte pour cette branche head, ou None."""
     owner = repo.split("/")[0]

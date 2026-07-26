@@ -277,6 +277,16 @@ ticket à la fois.
   qu'aucun marqueur ne survit avant de committer le merge, sinon
   `merge --abort` (branche intacte) + 🛑 humain. Priorité : révision >
   review demandée > conflit > CI rouge > ticket. Étape conso `conflit`.
+- **Commande `/ticket` en commentaire de PR** (2026-07-26) : un commentaire
+  du propriétaire commençant par `/ticket <titre>` (corps optionnel sur les
+  lignes suivantes) crée l'issue correspondante avec le lien vers la PR
+  d'origine — **sans label** (`ai-ready` reste un geste humain), zéro appel
+  Claude, dédup partagée avec la révision. Les commentaires `/…` ne
+  déclenchent jamais de révision (espace de noms des commandes).
+- **Review en lecture seule, DoD à la CI** (2026-07-26) : le prompt
+  d'auto-review précise que l'agent ne peut pas exécuter tests/lint/types —
+  c'est la CI de la PR qui les exécute ; la review se concentre sur ce que
+  la CI ne voit pas, au lieu de signaler l'évidence à chaque PR.
 - **Suivi depuis Discord** (2026-07-25) : `pipelines/dev_statut.py`, branché
   sur le canal `#orchestrateur` (dict `PIPELINES` de `bot.py`) — `@bot conso`
   (tableau par ticket) et `@bot statut` (tickets en file/en cours/en échec,
