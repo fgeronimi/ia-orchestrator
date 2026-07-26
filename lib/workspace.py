@@ -79,9 +79,48 @@ def commit_tout(path: Path, message: str) -> bool:
     return True
 
 
-def diff_contre(path: Path, base: str) -> str:
-    """Diff de la branche courante contre la base (pour l'auto-review)."""
-    return _git(path, "diff", f"{base}...HEAD")
+# Fichiers exclus du diff d'auto-review : au-delà de ce seuil (taille du
+# patch, en octets) ou pour ces extensions manifestement de la donnée
+# générée, le fichier coûte cher en tokens sans rien apporter à la review
+# (cas vécu : un GeoJSON de 570 Ko a fait grimper une review à 1,31 $).
+SEUIL_DIFF_FICHIER = 20_000
+EXTENSIONS_DONNEES = {
+    ".geojson", ".csv", ".lock", ".svg",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
+}
+
+
+def _taille_lisible(octets: int) -> str:
+    return f"{octets // 1000} Ko" if octets >= 1000 else f"{octets} o"
+
+
+def diff_filtre(path: Path, base: str, seuil: int = SEUIL_DIFF_FICHIER) -> tuple[str, list[str]]:
+    """Diff de la branche courante contre la base, assets volumineux exclus.
+
+    Repère les fichiers dont le patch dépasse `seuil` octets ou dont
+    l'extension est manifestement de la donnée générée (GeoJSON, CSV,
+    lockfile, image...) et les exclut du diff par pathspec (un GeoJSON
+    minifié sur une seule ligne ferait exploser la taille du patch sans que
+    `git diff --stat` ne le montre en nombre de lignes). Retourne le diff
+    filtré et la liste des exclusions ("chemin (taille)"), à faire figurer
+    dans le prompt de review pour que l'agent sache qu'elles existent.
+    """
+    fichiers = [f for f in _git(path, "diff", "--name-only", f"{base}...HEAD").splitlines() if f]
+    chemins_exclus = []
+    exclus = []
+    for f in fichiers:
+        patch = _git(path, "diff", f"{base}...HEAD", "--", f)
+        taille = len(patch.encode("utf-8"))
+        if taille > seuil or Path(f).suffix.lower() in EXTENSIONS_DONNEES:
+            chemins_exclus.append(f)
+            exclus.append(f"{f} ({_taille_lisible(taille)})")
+
+    if not chemins_exclus:
+        return _git(path, "diff", f"{base}...HEAD"), []
+
+    pathspecs = [f":!{f}" for f in chemins_exclus]
+    diff = _git(path, "diff", f"{base}...HEAD", "--", ".", *pathspecs)
+    return diff, exclus
 
 
 def merger_base(path: Path, base: str) -> bool:
