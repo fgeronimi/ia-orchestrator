@@ -55,12 +55,15 @@ logs: ## Suit les logs des deux services (Ctrl-C pour sortir)
 	@journalctl -u orchestrator-bot -u orchestrator-server -f
 
 test: ## Vérifie que les modules importent
-	@$(PYTHON) -c "import bot, server, poll, pipelines.dev_executor, \
-		pipelines.dev_followup, pipelines.dev_statut, lib.claude, lib.github, \
-		lib.notify, lib.state, lib.workspace" && echo "imports OK"
+	@$(PYTHON) -c "import bot, server, poll, forge, pipelines.dev_executor, \
+		pipelines.dev_followup, pipelines.dev_statut, pipelines.forge, \
+		lib.claude, lib.github, lib.notify, lib.state, lib.workspace" && echo "imports OK"
 
 poll: ## Lance un tour du poller GitHub (WATCHED_REPO du .env) ; peut déclencher l'exécution réelle d'un ticket ai-ready
 	@$(PYTHON) poll.py
+
+forge: ## Vérifie les conditions déclaratives des repos surveillés (data/forge.yaml)
+	@$(PYTHON) forge.py
 
 conso: ## Conso Claude par ticket (tokens lus/générés, coût estimé)
 	@test -f state/orchestrator.db || { echo "Pas encore de données."; exit 0; }
@@ -71,10 +74,10 @@ conso: ## Conso Claude par ticket (tokens lus/générés, coût estimé)
 		 printf('%.2f $$', SUM(cout_usd)) AS cout \
 		 FROM conso_claude GROUP BY repo, numero ORDER BY MAX(le) DESC"
 
-install-timer: ## Installe les timers systemd (sync git + poll GitHub)
+install-timer: ## Installe les timers systemd (sync git + poll GitHub + forge quotidienne)
 	@sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
 	@sudo systemctl daemon-reload
-	@sudo systemctl enable --now orchestrator-sync.timer orchestrator-poll.timer
+	@sudo systemctl enable --now orchestrator-sync.timer orchestrator-poll.timer orchestrator-forge.timer
 	@systemctl list-timers 'orchestrator-*' --no-pager
 
 # ------------------------------------------------------------ depuis le Mac

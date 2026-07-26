@@ -1,0 +1,22 @@
+# Forge : vérifie les conditions déclaratives des repos surveillés
+# (data/forge.yaml) et ouvre un ticket par écart, sans label.
+# Déclenché par orchestrator-forge.timer (oneshot, 1x/jour).
+# Installation :  make install-timer
+# Logs :          journalctl -u orchestrator-forge -f
+
+[Unit]
+Description=Orchestrateur IA - forge (conformité des repos surveillés)
+After=network-online.target
+Wants=network-online.target
+# Un passage qui crashe (hors écart normal, géré en amont) notifie Discord.
+OnFailure=orchestrator-fail-notify@%n.service
+
+[Service]
+Type=oneshot
+User=fgeronimi
+WorkingDirectory=/home/fgeronimi/ia-orchestrator
+EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash /home/fgeronimi/ia-orchestrator/infra/forge.sh
+
+PrivateTmp=true

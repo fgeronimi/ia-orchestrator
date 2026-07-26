@@ -84,6 +84,15 @@ def _connexion() -> sqlite3.Connection:
         "  PRIMARY KEY (repo, sha)"
         ")"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS forge_signale ("  # écarts de conformité déjà signalés
+        "  repo TEXT NOT NULL,"
+        "  condition TEXT NOT NULL,"
+        "  version INTEGER NOT NULL,"  # version de data/forge.yaml au moment du signalement
+        "  signalee_le TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  PRIMARY KEY (repo, condition, version)"
+        ")"
+    )
     return conn
 
 
@@ -224,6 +233,23 @@ def marquer_ci_notifiee(repo: str, sha: str) -> None:
         conn.execute(
             "INSERT OR IGNORE INTO ci_notifiee (repo, sha) VALUES (?, ?)",
             (repo, sha),
+        )
+
+
+def forge_deja_signalee(repo: str, condition: str, version: int) -> bool:
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT 1 FROM forge_signale WHERE repo = ? AND condition = ? AND version = ?",
+            (repo, condition, version),
+        )
+        return cur.fetchone() is not None
+
+
+def marquer_forge_signalee(repo: str, condition: str, version: int) -> None:
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO forge_signale (repo, condition, version) VALUES (?, ?, ?)",
+            (repo, condition, version),
         )
 
 
