@@ -10,3 +10,5 @@ repos:
     timeout: 900
   - repo: fgeronimi/havre-app
     timeout: 1200         # pnpm install d'un monorepo froid sur le Pi
+  - repo: fgeronimi/havre-mesure
+    timeout: 900
