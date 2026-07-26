@@ -41,14 +41,24 @@ def _charger_conditions() -> dict:
 
 
 def _protection_main_active(repo: str, branche_defaut: str) -> bool:
-    """Un ruleset actif ciblant la branche par défaut, exigeant une pull request."""
+    """Un ruleset actif ciblant la branche par défaut, exigeant une pull request.
+
+    Cibles reconnues : la branche nommée, `~DEFAULT_BRANCH` et `~ALL`
+    (toutes les branches — inclut la branche par défaut). Un ruleset qui
+    l'exclut explicitement ne compte pas.
+    """
     cible_branche = f"refs/heads/{branche_defaut}"
+    cibles = {cible_branche, "~DEFAULT_BRANCH", "~ALL"}
     for ruleset in github.list_rulesets(repo):
         if ruleset["enforcement"] != "active":
             continue
         detail = github.get_ruleset(repo, ruleset["id"])
-        refs = detail["conditions"].get("ref_name", {}).get("include", [])
-        if cible_branche not in refs and "~DEFAULT_BRANCH" not in refs:
+        ref_name = detail["conditions"].get("ref_name", {})
+        include = set(ref_name.get("include", []))
+        exclude = set(ref_name.get("exclude", []))
+        if not (include & cibles):
+            continue
+        if exclude & {cible_branche, "~DEFAULT_BRANCH"}:
             continue
         if any(r["type"] == "pull_request" for r in detail["rules"]):
             return True
@@ -78,14 +88,28 @@ def _ecarts(repo: str, conditions: dict) -> list[tuple[str, str]]:
                 f"Geste attendu : ajouter `{chemin}` à la racine du repo.",
             ))
 
-    if conditions.get("protection_main") and not _protection_main_active(repo, branche_defaut):
-        ecarts.append((
-            "protection_main",
-            f"Aucun ruleset actif n'exige de pull request sur `{branche_defaut}`.\n\n"
-            f"Geste attendu : créer un ruleset actif (Settings → Rules → "
-            f"Rulesets), ciblant `{branche_defaut}`, avec la règle "
-            f"« Require a pull request before merging ».",
-        ))
+    if conditions.get("protection_main"):
+        try:
+            protege = _protection_main_active(repo, branche_defaut)
+        except github.GitHubError as exc:
+            # Repos privés sous plan gratuit : l'API rulesets répond 403
+            # (« Upgrade to GitHub Pro »). La condition est insatisfiable —
+            # exiger un geste que GitHub refuse serait absurde. On saute,
+            # en le disant dans les logs.
+            if "403" in str(exc):
+                print(f"[forge] {repo} : rulesets non vérifiables (403 — "
+                      f"plan/permissions), condition protection_main sautée")
+                protege = True
+            else:
+                raise
+        if not protege:
+            ecarts.append((
+                "protection_main",
+                f"Aucun ruleset actif n'exige de pull request sur `{branche_defaut}`.\n\n"
+                f"Geste attendu : créer un ruleset actif (Settings → Rules → "
+                f"Rulesets), ciblant `{branche_defaut}`, avec la règle "
+                f"« Require a pull request before merging ».",
+            ))
 
     return ecarts
 
@@ -95,8 +119,17 @@ async def handle() -> str:
     version = conditions.get("version", 1)
 
     total = 0
+    sautes: list[str] = []
     for repo in _charger_repos():
-        for condition, description in _ecarts(repo, conditions):
+        # Un repo en erreur (403, réseau, rate limit) ne doit pas masquer la
+        # vérification des suivants : on isole, on continue, on notifie.
+        try:
+            ecarts = _ecarts(repo, conditions)
+        except Exception as exc:  # noqa: BLE001 — frontière d'isolation par repo
+            print(f"[forge] {repo} : vérification impossible ({exc}) — repo sauté")
+            sautes.append(repo)
+            continue
+        for condition, description in ecarts:
             if state.forge_deja_signalee(repo, condition, version):
                 continue
             github.create_issue(
@@ -112,10 +145,16 @@ async def handle() -> str:
             total += 1
             print(f"[forge] écart signalé sur {repo} : {condition}")
 
-    if total:
-        await notify.notify(
-            f"🛠️ forge : {total} écart(s) de conformité signalé(s) — "
-            f"voir les nouvelles issues `forge:` sur les repos concernés"
-        )
+    if total or sautes:
+        morceaux = []
+        if total:
+            morceaux.append(f"{total} écart(s) de conformité signalé(s) — "
+                            f"voir les nouvelles issues `forge:`")
+        if sautes:
+            morceaux.append(f"⚠️ repo(s) non vérifié(s) : {', '.join(sautes)}")
+        await notify.notify("🛠️ forge : " + " · ".join(morceaux))
 
-    return f"{total} écart(s) signalé(s)" if total else "aucun écart"
+    bilan = f"{total} écart(s) signalé(s)" if total else "aucun écart"
+    if sautes:
+        bilan += f", {len(sautes)} repo(s) sauté(s)"
+    return bilan

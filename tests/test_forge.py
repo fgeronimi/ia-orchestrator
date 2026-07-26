@@ -30,6 +30,14 @@ DETAIL_RULESET_SANS_PR = {
     "conditions": {"ref_name": {"include": ["refs/heads/main"]}},
     "rules": [{"type": "deletion"}],
 }
+DETAIL_RULESET_TOUTES_BRANCHES = {
+    "conditions": {"ref_name": {"include": ["~ALL"], "exclude": []}},
+    "rules": [{"type": "pull_request"}],
+}
+DETAIL_RULESET_MAIN_EXCLUE = {
+    "conditions": {"ref_name": {"include": ["~ALL"], "exclude": ["refs/heads/main"]}},
+    "rules": [{"type": "pull_request"}],
+}
 
 
 class ForgeTest(unittest.IsolatedAsyncioTestCase):
@@ -141,6 +149,73 @@ class ForgeTest(unittest.IsolatedAsyncioTestCase):
         self.mock_create_issue.assert_called_once()
         self.mock_notify.assert_awaited_once()
         self.assertIn("1 écart", resultat)
+
+
+    async def test_ruleset_toutes_branches_reconnu(self):
+        """Un ruleset ciblant ~ALL protège aussi main : pas de faux écart."""
+        with patch("lib.github.list_labels", return_value=["ai-ready"]), \
+             patch("lib.github.fichier_existe", return_value=True), \
+             patch("lib.github.list_rulesets", return_value=RULESET_ACTIF_PR), \
+             patch("lib.github.get_ruleset", return_value=DETAIL_RULESET_TOUTES_BRANCHES):
+            resultat = await forge.handle()
+
+        self.mock_create_issue.assert_not_called()
+        self.assertIn("aucun écart", resultat)
+
+    async def test_ruleset_excluant_main_ne_compte_pas(self):
+        with patch("lib.github.list_labels", return_value=["ai-ready"]), \
+             patch("lib.github.fichier_existe", return_value=True), \
+             patch("lib.github.list_rulesets", return_value=RULESET_ACTIF_PR), \
+             patch("lib.github.get_ruleset", return_value=DETAIL_RULESET_MAIN_EXCLUE):
+            resultat = await forge.handle()
+
+        self.mock_create_issue.assert_called_once()
+        _, kwargs = self.mock_create_issue.call_args
+        self.assertIn("protection_main", kwargs["title"])
+        self.assertIn("1 écart", resultat)
+
+    async def test_rulesets_403_condition_sautee_sans_ticket(self):
+        """Repo privé sous plan gratuit : l'API rulesets répond 403 — la
+        condition est insatisfiable, on ne réclame pas l'impossible."""
+        from lib.github import GitHubError
+
+        with patch("lib.github.list_labels", return_value=["ai-ready"]), \
+             patch("lib.github.fichier_existe", return_value=True), \
+             patch("lib.github.list_rulesets",
+                   side_effect=GitHubError("403 — permission refusée (plan)")):
+            resultat = await forge.handle()
+
+        self.mock_create_issue.assert_not_called()
+        self.assertIn("aucun écart", resultat)
+
+    async def test_erreur_sur_un_repo_n_empeche_pas_les_suivants(self):
+        """Isolation par repo : un 403 sur le premier ne saute pas le second,
+        et la notification liste les repos non vérifiés."""
+        from lib.github import GitHubError
+
+        forge.REPOS_YAML.write_text(yaml.dump({"repos": ["acme/casse", "acme/toto"]}))
+
+        def labels_selon_repo(repo):
+            if repo == "acme/casse":
+                raise GitHubError("HTTP 500 : boom")
+            return []  # acme/toto : label ai-ready manquant
+
+        with patch("lib.github.list_labels", side_effect=labels_selon_repo), \
+             patch("lib.github.fichier_existe", return_value=True), \
+             patch("lib.github.list_rulesets", return_value=RULESET_ACTIF_PR), \
+             patch("lib.github.get_ruleset", return_value=DETAIL_RULESET_PR):
+            resultat = await forge.handle()
+
+        # le second repo a bien été vérifié malgré le crash du premier
+        self.mock_create_issue.assert_called_once()
+        args, _ = self.mock_create_issue.call_args
+        self.assertEqual(args[0], "acme/toto")
+        # la notif mentionne le repo sauté
+        self.mock_notify.assert_awaited_once()
+        message = self.mock_notify.await_args.args[0]
+        self.assertIn("acme/casse", message)
+        self.assertIn("1 écart", resultat)
+        self.assertIn("1 repo(s) sauté(s)", resultat)
 
 
 if __name__ == "__main__":
