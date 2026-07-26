@@ -1,0 +1,14 @@
+# Déclenche orchestrator-forge.service une fois par jour.
+# Installation :  make install-timer
+# État :          systemctl list-timers orchestrator-forge
+
+[Unit]
+Description=Orchestrateur IA - forge quotidienne (conformité des repos surveillés)
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

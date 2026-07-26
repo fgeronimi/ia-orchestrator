@@ -81,6 +81,37 @@ def get_default_branch(repo: str) -> str:
     return _get(f"/repos/{repo}")["default_branch"]
 
 
+def list_labels(repo: str) -> list[str]:
+    """Noms des labels existants sur le repo."""
+    brut = _get(f"/repos/{repo}/labels", {"per_page": 100})
+    return [lbl["name"] for lbl in brut]
+
+
+def fichier_existe(repo: str, chemin: str, ref: str | None = None) -> bool:
+    """Un fichier existe-t-il à ce chemin (ref = branche, défaut : branche par défaut) ?"""
+    try:
+        _get(f"/repos/{repo}/contents/{chemin}", {"ref": ref} if ref else None)
+        return True
+    except GitHubError as exc:
+        if "404" in str(exc):
+            return False
+        raise
+
+
+def list_rulesets(repo: str) -> list[dict]:
+    """Rulesets du repo (id, enforcement) — le détail (branches ciblées, règles)
+    n'est pas dans cet endpoint de liste, voir get_ruleset."""
+    brut = _get(f"/repos/{repo}/rulesets")
+    return [{"id": r["id"], "name": r["name"], "enforcement": r["enforcement"]}
+            for r in brut]
+
+
+def get_ruleset(repo: str, ruleset_id: int) -> dict:
+    """Détail d'un ruleset : branches ciblées (conditions) et règles actives (rules)."""
+    r = _get(f"/repos/{repo}/rulesets/{ruleset_id}")
+    return {"conditions": r.get("conditions", {}), "rules": r.get("rules", [])}
+
+
 def get_issue(repo: str, numero: int) -> dict:
     """Issue complète, avec son corps (title, body, labels, url)."""
     i = _get(f"/repos/{repo}/issues/{numero}")

@@ -58,6 +58,10 @@ L'état vit dans les **labels GitHub** de l'issue :
 - **CI intégrée** : GitHub Actions (`make test`) sur chaque PR et sur `main` ;
   résultat notifié par sha ; CI rouge réparée automatiquement.
 - **Multi-repos** : liste dans `data/repos.yaml`, un PAT scopé sur chacun.
+- **Forge** : conditions déclaratives de conformité (`data/forge.yaml` — labels,
+  fichiers requis, protection de `main`), vérifiées 1x/jour sur chaque repo
+  surveillé ; chaque écart ouvre un ticket `forge:` **sans label** (poser
+  `ai-ready` reste un geste humain).
 - **Conso tracée par ticket** : tokens et coût estimé de chaque appel Claude,
   par étape (`implementation`, `auto-review`, `revision`, `ci-fix`).
 - **Notifications Discord** à chaque étape (🎫 🔨 🔍 ✏️ 🔧 ✅ 🧹 ⚠️ ⏳ 🚨), et un
@@ -70,19 +74,22 @@ L'état vit dans les **labels GitHub** de l'issue :
 
 ```
 poll.py                    # un tour : notifs + followup + CI, puis 1 action lourde (verrou)
+forge.py                   # un passage : conformité déclarative des repos surveillés (verrou)
 pipelines/
 ├── dev_executor.py        # exécute, révise, répare la CI (les appels Claude)
 ├── dev_followup.py        # suivi léger : nettoyage post-merge, CI (notif + détection)
-└── dev_statut.py          # @bot conso / statut depuis Discord
+├── dev_statut.py          # @bot conso / statut depuis Discord
+└── forge.py                # vérifie data/forge.yaml sur chaque repo, ticket par écart
 lib/
 ├── claude.py              # wrapper claude -p (JSON : texte + tokens + coût, quota détecté)
-├── github.py              # API GitHub (issues, PR, labels, check runs, logs de jobs)
+├── github.py              # API GitHub (issues, PR, labels, rulesets, check runs, logs de jobs)
 ├── workspace.py           # clones locaux : branche, commit, push (token jamais persisté)
-├── state.py               # idempotence SQLite (notifs, PR, commentaires, CI, conso, quota)
+├── state.py               # idempotence SQLite (notifs, PR, commentaires, CI, conso, quota, forge)
 └── notify.py              # notifs : bot Discord si dispo, sinon webhook
 bot.py / server.py         # bot Discord (notifs + statut) / HTTP (/health, /conso)
-infra/                     # setup idempotent, systemd (timers poll + sync, OnFailure), sync auto
+infra/                     # setup idempotent, systemd (timers poll + sync + forge, OnFailure), sync auto
 data/repos.yaml            # repos surveillés
+data/forge.yaml            # conditions de conformité des repos surveillés
 ```
 
 Principes : **Discord/HTTP = bus d'événements** (zéro logique métier dans
@@ -105,14 +112,16 @@ cp .env.example .env && chmod 600 .env      # puis remplir les secrets (voir Con
 sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now orchestrator-bot orchestrator-server
-make install-timer                          # timers : poller (5 min) + auto-update (10 min)
+make install-timer                          # timers : poller (5 min) + auto-update (10 min) + forge (1x/j)
 ```
 
 Côté GitHub, une fois par repo surveillé :
-- créer les labels `ai-ready`, `ai-working`, `ai-failed` ;
+- créer les labels `ai-ready`, `ai-working`, `ai-failed`, `ai-review` ;
 - un **PAT fine-grained** scopé au repo : Contents, Pull requests, Issues en
-  write (+ Actions en read pour les logs de CI) ;
-- protéger `main` (l'agent ne pousse que sur `ai/*`, mais ceinture et bretelles).
+  write (+ Actions en read pour les logs de CI, + Administration en read pour
+  la forge) ;
+- protéger `main` (l'agent ne pousse que sur `ai/*`, mais ceinture et bretelles
+  — et c'est justement ce que la forge vérifie).
 
 ## Configuration
 
@@ -132,6 +141,16 @@ repos:
   - fgeronimi/ia-orchestrator
 ```
 
+Conditions de conformité des repos surveillés (`data/forge.yaml`) — voir le
+fichier pour le détail, à incrémenter (`version`) quand elles changent :
+
+```yaml
+version: 1
+labels: [ai-ready, ai-working, ai-failed, ai-review]
+fichiers: [CLAUDE.md]
+protection_main: true
+```
+
 ## Au quotidien
 
 ```bash
@@ -140,7 +159,7 @@ make deploy          # (Mac) push + mise à jour du Pi
 make remote-poll     # (Mac) déclenche un tour de poll (⚠️ peut exécuter un ticket)
 make remote-conso    # (Mac) conso Claude par ticket (tokens, coût)
 make remote-logs     # (Mac) logs du Pi en continu
-make conso / poll    # (Pi) équivalents locaux
+make conso / poll / forge  # (Pi) équivalents locaux (forge : vérification de conformité)
 ```
 
 Depuis Discord (`#orchestrateur`) : `@bot statut` (tickets en file / en cours /

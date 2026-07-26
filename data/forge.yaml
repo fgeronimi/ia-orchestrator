@@ -1,0 +1,21 @@
+# Conditions que doit remplir chaque repo surveillé (data/repos.yaml).
+# La forge (pipelines/forge.py, timer quotidien) vérifie ces conditions par
+# API pure et ouvre un ticket « forge: ... » (sans label) par écart.
+#
+# Incrémenter `version` quand les conditions changent : un écart déjà signalé
+# sous une version antérieure est re-signalé (nouvelle issue).
+version: 1
+
+# Labels requis (nom exact) — mécanique ai-ready/ai-working/ai-failed/ai-review.
+labels:
+  - ai-ready
+  - ai-working
+  - ai-failed
+  - ai-review
+
+# Chemins qui doivent exister sur la branche par défaut.
+fichiers:
+  - CLAUDE.md
+
+# Au moins un ruleset actif exigeant une pull request sur la branche par défaut.
+protection_main: true

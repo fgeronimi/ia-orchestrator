@@ -90,6 +90,17 @@ phases 0→3, implémentation actuelle).
 > suivi dans `#orchestrateur` : `@bot conso` / `@bot statut`
 > (`pipelines/dev_statut.py`, lecture seule).
 
+### Forge — conformité déclarative des repos surveillés — ✅ v1 faite
+Les repos surveillés doivent tous respecter les mêmes conditions (labels
+`ai-*`, fichiers requis, protection de `main`) ; la forge les rend
+déclaratives et versionnées dans `data/forge.yaml`. Timer `orchestrator-forge`
+(1x/jour) → `forge.py` → `pipelines/forge.py` vérifie chaque repo de
+`data/repos.yaml` **par API pure** (aucun appel Claude : conditions
+objectives) et ouvre une issue `forge: <condition>` **sans label** par écart
+(dédup SQLite par repo/condition/version, `lib/state`). Hors périmètre v1 :
+correction automatique des écarts (l'humain décide) et conditions floues
+nécessitant un agent LLM (v2 éventuelle).
+
 ---
 
 ## 3. Structure réelle du repo
@@ -102,37 +113,39 @@ ia-orchestrator/
 ├── bot.py                     # routeur Discord (notifs + @bot conso/statut dans #orchestrateur)
 ├── server.py                  # endpoint Flask /health (port 5000)
 ├── poll.py                    # ✅ poller multi-repos : notifs + followup + CI + 1 action lourde/tour
+├── forge.py                   # ✅ 1 passage/jour : conformité déclarative des repos surveillés
 ├── data/
-│   └── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
+│   ├── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
+│   └── forge.yaml             # ✅ conditions de conformité (labels, fichiers, protection main)
 ├── pipelines/
 │   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR + auto-review + révision + fix CI
 │   ├── dev_followup.py        # ✅ suivi : nettoyage post-merge, CI (notif + détection rouge)
-│   └── dev_statut.py          # ✅ @bot conso / statut depuis Discord (lecture seule)
+│   ├── dev_statut.py          # ✅ @bot conso / statut depuis Discord (lecture seule)
+│   └── forge.py                # ✅ vérifie data/forge.yaml sur chaque repo, ticket par écart
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
-│   ├── github.py              # ✅ wrapper API GitHub (lecture + écriture : PR, labels, commentaires)
+│   ├── github.py              # ✅ wrapper API GitHub (lecture + écriture : PR, labels, rulesets, commentaires)
 │   ├── workspace.py           # ✅ clones locaux où l'exécutant code (branche, commit, push)
-│   └── state.py               # ✅ idempotence SQLite (issues déjà notifiées)
-├── state/                     # runtime, gitignored (orchestrator.db, workspaces/, executor.lock)
+│   └── state.py               # ✅ idempotence SQLite (issues déjà notifiées, écarts de forge signalés)
+├── state/                     # runtime, gitignored (orchestrator.db, workspaces/, executor.lock, forge.lock)
 ├── Makefile                   # exploitation : sync, deploy, env-push/pull, logs, install-timer
 ├── infra/
 │   ├── setup.sh               # install idempotente (Pi ou VPS Debian)
 │   ├── sync.sh                # auto-update git + restart (appelé par le timer sync)
 │   ├── poll.sh                # ✅ un tour du poller (appelé par le timer poll)
+│   ├── forge.sh                # ✅ un passage de la forge (appelé par le timer forge)
 │   └── systemd/
 │       ├── orchestrator-bot.service      # bot.py
 │       ├── orchestrator-server.service   # server.py
 │       ├── orchestrator-sync.{service,timer}   # auto-update git, toutes les 10 min
 │       ├── orchestrator-poll.{service,timer}   # poller GitHub, toutes les 5 min
+│       ├── orchestrator-forge.{service,timer}  # forge (conformité), 1x/jour
 │       └── orchestrator-fail-notify@.service   # OnFailure → notif Discord 🚨
 └── docs/
     ├── architecture-mini-serveur-ia.md   # ce fichier
     └── plan-orchestrateur-dev.md         # plan + implémentation du pipeline dev GitHub
 ```
-
-> À créer pour la Phase 2 (voir le plan) : `pipelines/dev_followup.py`,
-> `data/repos.yaml` (config par repo : tests, déploiement).
 
 ---
 
@@ -178,8 +191,8 @@ du Pi (`make deploy PI_HOST=<ip-tailscale>`).
 |---|---|
 | `make sync` | pull, rebase, push, restart si code changé |
 | `make pull` / `push` / `restart` / `status` / `logs` / `test` | opérations unitaires |
-| `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min) |
-| `make poll` / `conso` | tour de poll à la main / conso Claude par ticket (tokens, coût) |
+| `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min + forge 1x/j) |
+| `make poll` / `conso` / `forge` | tour de poll / conso Claude par ticket / vérification de conformité, à la main |
 
 ### Poller GitHub (`orchestrator-poll.timer` → `poll.py`)
 Toutes les 5 min, `poll.py`, pour **chaque repo** de `data/repos.yaml`
@@ -194,6 +207,23 @@ limites : `docs/plan-orchestrateur-dev.md` §4 et §7.
 journalctl -u orchestrator-poll -f                         # logs du poller
 .venv/bin/python poll.py fgeronimi/ia-orchestrator         # un tour à la main
 sqlite3 state/orchestrator.db "SELECT * FROM issues_notifiees;"  # état dédup
+```
+
+### Forge — conformité déclarative (`orchestrator-forge.timer` → `forge.py`)
+Une fois par jour, `forge.py` (verrou `state/forge.lock`, même principe que
+l'action lourde de `poll.py`) charge les conditions de `data/forge.yaml`
+(version, labels requis, fichiers requis sur la branche par défaut,
+protection de `main` par ruleset actif exigeant une pull request) et les
+vérifie sur chaque repo de `data/repos.yaml`, **par API pure** (aucun appel
+Claude — ce sont des conditions objectives). Chaque écart ouvre une issue
+`forge: <condition>` **sans label** sur le repo concerné (poser `ai-ready`
+reste un geste humain), dédupliquée par (repo, condition, version) dans
+`state/orchestrator.db` (table `forge_signale`) — incrémenter `version` dans
+`data/forge.yaml` relance le signalement des écarts déjà connus.
+```bash
+journalctl -u orchestrator-forge -f                        # logs de la forge
+.venv/bin/python forge.py                                  # un passage à la main
+sqlite3 state/orchestrator.db "SELECT * FROM forge_signale;"  # état dédup
 ```
 
 ### Auto-update git (`infra/sync.sh` + `orchestrator-sync.timer`)
@@ -248,7 +278,7 @@ vécu : PATH node ajouté au repo mais unité installée jamais rafraîchie →
 | `NOTIFY_CHANNEL_ID` | canal notif du bot (#idees) | ✅ |
 | `DISCORD_WEBHOOK_URL` | notif hors-bot (timers, poller) → `#orchestrateur` | ✅ |
 | `CLAUDE_CODE_OAUTH_TOKEN` | auth Claude Code | ✅ |
-| `GITHUB_TOKEN` | poller GitHub (PAT, lecture Issues+Metadata) | ✅ |
+| `GITHUB_TOKEN` | poller + forge GitHub (PAT : Issues+Metadata en lecture, Contents/Pull requests/Issues en écriture, Administration en lecture pour les rulesets) | ✅ |
 | `WATCHED_REPO` | repo surveillé `owner/nom` — secours si `data/repos.yaml` absent | ✅ |
 
 ---
