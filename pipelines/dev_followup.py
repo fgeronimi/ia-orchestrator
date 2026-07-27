@@ -82,6 +82,63 @@ async def surveiller_ci(repo: str) -> None:
               f"{'rouge' if echecs else 'verte'} ({pr['sha'][:7]})")
 
 
+#: Un ticket ai-working sans PR depuis plus d'une heure = exécutant mort en
+#: plein vol (l'exécution la plus longue configurée est de 20 min, marge ×3).
+#: Les erreurs ATTRAPABLES remettent en file elles-mêmes (ClaudeQuotaError) ;
+#: ici on rattrape les arrêts DURS (process tué, OOM) — post-mortem vécu sur
+#: fgeronimi.github.io#8, voir le README.
+SEUIL_ORPHELIN_S = 60 * 60
+
+
+async def remettre_orphelins_en_file(repo: str) -> None:
+    """Détecte les `ai-working` orphelins (crash dur) et les remet en file.
+
+    Orphelin = issue ouverte `ai-working`, SANS PR ouverte sur sa branche
+    ai/<n>, dont le label a été posé il y a plus de SEUIL_ORPHELIN_S.
+    Dédup par (repo, numero, horodatage de pose) : un incident n'est signalé
+    qu'une fois, un NOUVEAU crash (nouvel horodatage) l'est à nouveau.
+    Au 2e orphelinage du même ticket : ai-failed (un crash déterministe
+    bouclerait — même philosophie que MAX_TENTATIVES_CI).
+    """
+    import datetime as _dt
+
+    for issue in github.list_issues(repo, labels=LABEL_WORKING):
+        n = issue["number"]
+        if github.find_open_pull(repo, f"{BRANCHE_PREFIX}{n}") is not None:
+            continue  # exécution légitime : la PR existe, le suivi normal gère
+
+        pose_le = github.label_pose_le(repo, n, LABEL_WORKING)
+        if pose_le is None:
+            continue  # pas de trace datée : ne rien décider sur du vide
+        pose = _dt.datetime.fromisoformat(pose_le.replace("Z", "+00:00"))
+        age = (_dt.datetime.now(_dt.UTC) - pose).total_seconds()
+        if age < SEUIL_ORPHELIN_S:
+            continue  # peut-être une exécution longue encore en cours
+        if state.orphelin_deja_signale(repo, n, pose_le):
+            continue
+
+        deja = state.compter_orphelinages(repo, n)
+        state.marquer_orphelin(repo, n, pose_le)
+        github.remove_label(repo, n, LABEL_WORKING)
+        if deja >= 1:
+            github.add_labels(repo, n, ["ai-failed"])
+            github.comment_issue(repo, n, (
+                "🤖 Exécution interrompue détectée une seconde fois (aucune PR "
+                f"après {SEUIL_ORPHELIN_S // 60} min) — `ai-failed` posé : un crash "
+                "répété ne se relance pas en boucle, intervention humaine requise."
+            ))
+            await notify.notify(f"🛑 #{n} ({repo}) : 2e crash dur de l'exécutant — ai-failed")
+        else:
+            github.add_labels(repo, n, ["ai-ready"])
+            github.comment_issue(repo, n, (
+                "🤖 Exécution interrompue détectée (label `ai-working` orphelin, "
+                f"aucune PR après {SEUIL_ORPHELIN_S // 60} min) — ticket remis en file."
+            ))
+            await notify.notify(f"♻️ #{n} ({repo}) : exécutant mort en plein vol, ticket remis en file")
+        print(f"[followup] orphelin #{n} ({repo}) : "
+              f"{'ai-failed (2e crash)' if deja >= 1 else 'remis en file'}")
+
+
 COMMANDE_TICKET = "/ticket"
 
 

@@ -93,6 +93,26 @@ def list_tree(repo: str, branche: str) -> list[str]:
     return [e["path"] for e in brut.get("tree", []) if e["type"] == "blob"]
 
 
+def label_pose_le(repo: str, numero: int, label: str) -> str | None:
+    """Horodatage ISO de la DERNIÈRE pose du label sur l'issue, ou None.
+
+    Via les events de l'issue (event `labeled`) — c'est la seule trace
+    datée d'un label. Parcourt tout (pagination 100) : les events sont
+    rendus du plus ancien au plus récent, on garde le dernier match.
+    """
+    quand = None
+    page = 1
+    while True:
+        events = _get(f"/repos/{repo}/issues/{numero}/events",
+                      {"per_page": 100, "page": page})
+        for e in events:
+            if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == label:
+                quand = e["created_at"]
+        if len(events) < 100:
+            return quand
+        page += 1
+
+
 def list_labels(repo: str) -> list[str]:
     """Noms des labels existants sur le repo."""
     brut = _get(f"/repos/{repo}/labels", {"per_page": 100})
