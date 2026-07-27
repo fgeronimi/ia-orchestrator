@@ -239,6 +239,75 @@ Le ticket qui a ajouté l'endpoint `/conso` de ce repo, déroulé réel :
 - Conso visible partout (notifs, `make conso`, `/conso`, `@bot conso`) — pas
   de coût silencieux.
 
+## Post-mortems — les erreurs qu'on a identifiées (et ce qu'elles enseignent)
+
+Un orchestrateur qui code seul fait des erreurs de conception subtiles.
+Les documenter vaut mieux que les oublier : chaque entrée décrit le
+problème, sa source, ce qui se serait passé, et la correction.
+
+### 2026-07 — la boucle de clarification consommait son plafond toute seule (PR #31)
+
+**Le problème.** La phase 2 du triage (#25) re-analyse un ticket
+`triage:questions` quand le propriétaire répond, avec un plafond de
+2 tours. Dans les chemins de *succès* de `clarifier()` (questions levées,
+nouvelles questions, plafond atteint), les commentaires traités n'étaient
+jamais marqués vus (`state.marquer_commentaire`) — seuls les chemins
+d'*erreur* le faisaient.
+
+**La source.** Une asymétrie classique d'agent : les chemins d'erreur ont
+été écrits avec soin (quota, JSON invalide, échec GitHub — chacun décide
+explicitement de marquer ou non), et le chemin nominal a hérité de
+l'hypothèse implicite « le travail est fait, rien à nettoyer ». La dédup
+était bien *conçue* (clé partagée avec la boucle de révision), juste
+jamais *appelée* là où tout se passe bien. Les tests vérifiaient chaque
+comportement isolément — aucun ne rejouait le passage suivant du poller.
+
+**Les conséquences (évitées).** Le poll tourne toutes les 5 minutes : la
+même réponse humaine aurait été retraitée à chaque passage. Concrètement :
+tu réponds une fois → questions au tour 1 → cinq minutes plus tard le
+même commentaire re-déclenche un tour 2 sur ta *même* réponse → plafond
+atteint → « triage silencieux » sans que tu aies jamais pu répondre aux
+secondes questions. En prime : un appel Claude gaspillé par passage, et
+des commentaires en double sur le ticket.
+
+**La résolution.** Marquer les commentaires vus dès que l'appel Claude est
+consommé (parse réussi), *avant* les écritures GitHub : une écriture qui
+échoue ensuite notifie, mais ne rejoue pas le quota. Et un test de
+régression qui vérifie l'état de dédup *après* l'appel — le test qui
+manquait : celui qui simule le temps qui passe, pas seulement l'action.
+
+**La leçon générale.** Dans un système qui se re-déclenche périodiquement,
+« traiter » n'est pas fini tant que l'événement n'est pas marqué consommé —
+et c'est le chemin nominal qui oublie, jamais les chemins d'erreur.
+L'auto-review du Pi n'avait pas vu ce bug (elle relit le diff, pas le
+comportement au tour suivant) ; c'est une relecture humaine/locale avec la
+question « et dans 5 minutes ? » qui l'a attrapé.
+
+### 2026-07 — le triage citait des fichiers inventés (PR #28/#30)
+
+**Le problème.** Le premier triage (#24) annonçait des « fichiers
+probables » plausibles mais inexistants (`triage/orchestrator.py`,
+`.github/workflows/triage.yml`…).
+
+**La source.** Le triage tourne en raisonnement pur (`allowed_tools=[]`,
+c'est ce qui le rend quasi gratuit) : sans accès au dépôt, le champ ne
+pouvait être que de la spéculation habillée en précision. L'erreur de
+conception était de demander au modèle une information qu'il n'avait
+aucun moyen d'avoir.
+
+**Les conséquences (évitées).** Trompeur en soi, et dangereux en aval :
+la phase 3 (#26) injectera cette analyse dans le prompt de l'exécutant —
+des chemins hallucinés seraient devenus une désorientation active.
+
+**La résolution (#29).** Ancrer : l'arborescence réelle du repo (un appel
+API `git/trees`, zéro token) est injectée dans le prompt avec la consigne
+« ne cite que ces chemins », **et** filtrée côté code après la réponse —
+la consigne seule ne suffit jamais (défense en profondeur).
+
+**La leçon générale.** Ne jamais demander à un modèle un champ dont il n'a
+pas la source : soit on lui donne la source (ancrage), soit on retire le
+champ. Et toute contrainte de prompt se double d'une validation côté code.
+
 ## Licence
 
 [MIT](LICENSE).
