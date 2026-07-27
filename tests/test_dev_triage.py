@@ -51,12 +51,15 @@ class DevTriageTest(unittest.IsolatedAsyncioTestCase):
         self._patches = [
             patch("pipelines.dev_triage.github.get_issue",
                  return_value={**ISSUE, "body": "Corps du ticket."}),
+            patch("pipelines.dev_triage.github.get_default_branch", return_value="main"),
+            patch("pipelines.dev_triage.github.list_tree", return_value=["src/toolbar.py"]),
             patch("pipelines.dev_triage.github.add_labels"),
             patch("pipelines.dev_triage.github.comment_issue"),
             patch("pipelines.dev_triage.notify.notify", new_callable=AsyncMock),
         ]
-        (self.mock_get_issue, self.mock_add_labels,
-         self.mock_comment, self.mock_notify) = (p.start() for p in self._patches)
+        (self.mock_get_issue, self.mock_default_branch, self.mock_list_tree,
+         self.mock_add_labels, self.mock_comment, self.mock_notify) = (
+            p.start() for p in self._patches)
 
     def tearDown(self):
         for p in self._patches:
@@ -76,6 +79,48 @@ class DevTriageTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("src/toolbar.py", corps)
         self.mock_notify.assert_awaited_once()
         self.assertTrue(state.issue_deja_triee(REPO, 1))
+
+    async def test_fichier_probable_hors_arborescence_est_filtre(self):
+        self.mock_list_tree.return_value = ["src/toolbar.py"]
+        analyse = dict(ANALYSE_CLAIRE, fichiers_probables=["src/toolbar.py", "src/invente.py"])
+        with patch("pipelines.dev_triage.run_claude",
+                   new=AsyncMock(return_value=_resultat(json.dumps(analyse)))):
+            await dev_triage.trier(REPO, ISSUE)
+
+        corps = self.mock_comment.call_args.args[2]
+        self.assertIn("src/toolbar.py", corps)
+        self.assertNotIn("src/invente.py", corps)
+
+    async def test_aucun_fichier_probable_pertinent_liste_vide_acceptee(self):
+        self.mock_list_tree.return_value = ["src/toolbar.py"]
+        analyse = dict(ANALYSE_CLAIRE, fichiers_probables=["src/introuvable.py"])
+        with patch("pipelines.dev_triage.run_claude",
+                   new=AsyncMock(return_value=_resultat(json.dumps(analyse)))):
+            await dev_triage.trier(REPO, ISSUE)
+
+        corps = self.mock_comment.call_args.args[2]
+        self.assertNotIn("Fichiers probables", corps)
+
+    async def test_arborescence_tronquee_dans_le_prompt(self):
+        self.mock_list_tree.return_value = [f"src/f{i}.py" for i in range(400)]
+        mock_claude = AsyncMock(return_value=_resultat(json.dumps(ANALYSE_CLAIRE)))
+        with patch("pipelines.dev_triage.run_claude", new=mock_claude):
+            await dev_triage.trier(REPO, ISSUE)
+
+        prompt = mock_claude.call_args.args[0]
+        self.assertIn("src/f0.py", prompt)
+        self.assertIn("src/f299.py", prompt)
+        self.assertNotIn("src/f300.py", prompt)
+
+    async def test_arborescence_apparait_dans_le_prompt(self):
+        self.mock_list_tree.return_value = ["src/toolbar.py", "README.md"]
+        mock_claude = AsyncMock(return_value=_resultat(json.dumps(ANALYSE_CLAIRE)))
+        with patch("pipelines.dev_triage.run_claude", new=mock_claude):
+            await dev_triage.trier(REPO, ISSUE)
+
+        prompt = mock_claude.call_args.args[0]
+        self.assertIn("src/toolbar.py", prompt)
+        self.assertIn("README.md", prompt)
 
     async def test_ticket_flou_ajoute_triage_questions_et_questions_en_commentaire(self):
         with patch("pipelines.dev_triage.run_claude",
