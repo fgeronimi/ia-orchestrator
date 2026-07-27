@@ -147,19 +147,18 @@ async def trier(repo: str, issue: dict) -> None:
         print(f"[triage] #{n} : échec — {exc}")
         return
 
-    state.marquer_issue_triee(repo, n)
     state.enregistrer_conso(repo, n, "triage", resultat.tokens_entree, resultat.tokens_cache,
                             resultat.tokens_sortie, resultat.cout_usd, modele)
 
     analyse = _parser_analyse(resultat.texte)
     if analyse is None:
+        state.marquer_issue_triee(repo, n)
         print(f"[triage] #{n} : sortie JSON invalide, ignorée")
         return
 
     labels = [f"size:{analyse['complexite']}", f"model:{analyse['modele_suggere']}"]
     if not analyse["clair"]:
         labels.append(LABEL_QUESTIONS)
-    github.add_labels(repo, n, labels)
 
     if analyse["clair"]:
         commentaire = (f"🤖 **Triage** — taille {analyse['complexite']}, "
@@ -171,7 +170,16 @@ async def trier(repo: str, issue: dict) -> None:
         questions = "\n".join(f"- {q}" for q in analyse["questions"])
         commentaire = (f"🤖 **Triage** — précisions nécessaires avant implémentation\n\n"
                        f"{analyse['resume']}\n\n{questions}")
-    github.comment_issue(repo, n, commentaire)
+
+    try:
+        github.add_labels(repo, n, labels)
+        github.comment_issue(repo, n, commentaire)
+    except Exception as exc:
+        # Pas marqué triée : retentée au prochain tour (ex. label pas encore créé sur le repo).
+        await notify.notify(f"⚠️ #{n} : triage — échec écriture GitHub (labels/commentaire) — {exc}")
+        return
+
+    state.marquer_issue_triee(repo, n)
 
     await notify.notify(
         f"🔎 #{n} triée — {'clair' if analyse['clair'] else 'questions'} "
