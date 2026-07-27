@@ -322,6 +322,12 @@ async def clarifier(repo: str, issue: dict, nouveaux: list[dict]) -> None:
         print(f"[triage] #{n} : clarification — sortie JSON invalide, ignorée")
         return
 
+    # Marquer vus MAINTENANT (l'appel Claude est consommé) : sinon le poll
+    # suivant retraiterait la même réponse — un tour de clarification serait
+    # brûlé toutes les 5 minutes sur le même commentaire, jusqu'au plafond.
+    for c in nouveaux:
+        state.marquer_commentaire(repo, c["cle"])
+
     tours = state.compter_conso(repo, n, ETAPE_CLARIFICATION)  # inclut cet appel
 
     try:

@@ -328,5 +328,17 @@ class DevTriageTest(unittest.IsolatedAsyncioTestCase):
         mock_list.assert_not_called()
 
 
+    async def test_clarification_marque_les_commentaires_vus(self):
+        """Régression : sans marquage en chemin de succès, le poll suivant
+        retraiterait la même réponse et brûlerait le plafond tout seul."""
+        analyse = dict(ANALYSE_FLOUE)  # toujours flou → nouvelles questions
+        with patch("pipelines.dev_triage.run_claude",
+                   new=AsyncMock(return_value=_resultat(json.dumps(analyse)))):
+            await dev_triage.clarifier(
+                REPO, ISSUE, [{"id": 4242, "body": "ma réponse", "cle": "issue-4242"}]
+            )
+        self.assertTrue(state.commentaire_deja_vu(REPO, "issue-4242"))
+
+
 if __name__ == "__main__":
     unittest.main()
