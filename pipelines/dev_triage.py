@@ -139,7 +139,7 @@ async def trier(repo: str, issue: dict) -> None:
     except ClaudeQuotaError as exc:
         # Pas marqué triée : retentée quand le quota reviendra.
         reprise = _bloquer_quota(exc)
-        await notify.notify(f"⏳ #{n} : {exc} — triage reporté vers {reprise}")
+        await notify.notify(f"⏳ #{n} : {exc} — raffinement reporté vers {reprise}")
         return
     except Exception as exc:
         # Échec dur : marqué triée (pas de retry en boucle sur une issue cassée).
@@ -161,14 +161,14 @@ async def trier(repo: str, issue: dict) -> None:
         labels.append(LABEL_QUESTIONS)
 
     if analyse["clair"]:
-        commentaire = (f"🤖 **Triage** — taille {analyse['complexite']}, "
+        commentaire = (f"🤖 **Raffinement** — taille {analyse['complexite']}, "
                        f"modèle suggéré {analyse['modele_suggere']}\n\n{analyse['resume']}")
         if analyse["fichiers_probables"]:
             commentaire += "\n\n**Fichiers probables :**\n" + "\n".join(
                 f"- `{f}`" for f in analyse["fichiers_probables"])
     else:
         questions = "\n".join(f"- {q}" for q in analyse["questions"])
-        commentaire = (f"🤖 **Triage** — précisions nécessaires avant implémentation\n\n"
+        commentaire = (f"🤖 **Raffinement** — précisions nécessaires avant implémentation\n\n"
                        f"{analyse['resume']}\n\n{questions}")
 
     try:
@@ -176,13 +176,13 @@ async def trier(repo: str, issue: dict) -> None:
         github.comment_issue(repo, n, commentaire)
     except Exception as exc:
         # Pas marqué triée : retentée au prochain tour (ex. label pas encore créé sur le repo).
-        await notify.notify(f"⚠️ #{n} : triage — échec écriture GitHub (labels/commentaire) — {exc}")
+        await notify.notify(f"⚠️ #{n} : raffinement — échec écriture GitHub (labels/commentaire) — {exc}")
         return
 
     state.marquer_issue_triee(repo, n)
 
     await notify.notify(
-        f"🔎 #{n} triée — {'clair' if analyse['clair'] else 'questions'} "
+        f"🔎 #{n} raffinée — {'clair' if analyse['clair'] else 'questions'} "
         f"(taille {analyse['complexite']}, modèle {analyse['modele_suggere']})"
     )
 
