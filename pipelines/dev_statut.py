@@ -24,7 +24,11 @@ def _conso() -> str:
         f"{sortie/1000:>5.1f}k générés  {cout:>5.2f} $"
         for ticket, appels, lus, sortie, cout in lignes
     )
-    return f"```\n{corps}\n```"
+    etapes = "\n".join(
+        f"{etape:<22} {appels:>3} appel(s)  {cout:>6.2f} $"
+        for etape, appels, _lus, _sortie, cout in state.conso_par_etape()
+    )
+    return f"```\n{corps}\n\nPar étape :\n{etapes}\n```"
 
 
 def _statut(repo: str) -> str:

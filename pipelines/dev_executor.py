@@ -44,7 +44,7 @@ Implémente-le, rien de plus.
 Ticket #{n} : {titre}
 
 {corps}
-
+{analyse}
 Consignes :
 - Modifie directement les fichiers du dépôt courant.
 - Reste minimal et scopé au ticket. Respecte les conventions du repo
@@ -200,6 +200,28 @@ async def _auto_review(repo: str, path, base: str, n: int, titre: str, pr: dict,
         await notify.notify(f"⚠️ #{n} : auto-review échouée (PR #{pr['number']} ouverte) — {exc}")
 
 
+def _analyse_triage(repo: str, n: int) -> str:
+    """Dernière analyse du triage (🤖 Raffinement/Clarification) en bloc de
+    prompt, ou chaîne vide. Des HYPOTHÈSES pour orienter l'agent — le prompt
+    le dit explicitement pour qu'il ne les prenne pas pour des faits
+    (post-mortem « fichiers hallucinés », README)."""
+    try:
+        commentaires = github.list_comments(repo, n)
+    except Exception:
+        return ""  # le triage est un bonus, jamais un bloqueur
+    analyses = [
+        c["body"] for c in commentaires
+        if (c["body"] or "").startswith(("🤖 **Raffinement**", "🤖 **Clarification**"))
+    ]
+    if not analyses:
+        return ""
+    return (
+        "\nAnalyse préalable du ticket (triage automatique — des hypothèses "
+        "pour t'orienter, à VÉRIFIER dans le dépôt, pas des faits) :\n"
+        f"{analyses[-1].removeprefix('🤖 ').strip()}\n"
+    )
+
+
 async def executer(repo: str, issue: dict, timeout: int | None = None) -> None:
     n = issue["number"]
     titre = issue["title"]
@@ -222,7 +244,8 @@ async def executer(repo: str, issue: dict, timeout: int | None = None) -> None:
         modele = _modele("executer", labels)
         await notify.notify(f"🔨 #{n} : implémentation par Claude…")
         resultat = await run_claude(
-            PROMPT_IMPL.format(n=n, titre=titre, corps=corps or "(pas de description)"),
+            PROMPT_IMPL.format(n=n, titre=titre, corps=corps or "(pas de description)",
+                               analyse=_analyse_triage(repo, n)),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
             timeout=timeout,

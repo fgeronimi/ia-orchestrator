@@ -75,6 +75,13 @@ conso: ## Conso Claude par ticket (tokens lus/générés, coût estimé)
 		 printf('%.2f $$', SUM(cout_usd)) AS cout, \
 		 COALESCE(GROUP_CONCAT(DISTINCT modele), '(défaut)') AS modele \
 		 FROM conso_claude GROUP BY repo, numero ORDER BY MAX(le) DESC"
+	@echo "" && echo "Par étape (triage vs implémentation vs review…) :"
+	@sqlite3 -column -header state/orchestrator.db \
+		"SELECT etape, COUNT(*) AS appels, \
+		 printf('%.0fk', SUM(tokens_entree + tokens_cache)/1000.0) AS lus, \
+		 printf('%.1fk', SUM(tokens_sortie)/1000.0) AS generes, \
+		 printf('%.2f $$', SUM(cout_usd)) AS cout \
+		 FROM conso_claude GROUP BY etape ORDER BY SUM(cout_usd) DESC"
 
 install-timer: ## Installe les timers systemd (sync git + poll GitHub + forge quotidienne)
 	@sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
