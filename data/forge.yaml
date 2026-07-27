@@ -4,14 +4,22 @@
 #
 # Incrémenter `version` quand les conditions changent : un écart déjà signalé
 # sous une version antérieure est re-signalé (nouvelle issue).
-version: 1
+version: 3
 
-# Labels requis (nom exact) — mécanique ai-ready/ai-working/ai-failed/ai-review.
+# Labels requis (nom exact) — mécanique ai-ready/ai-working/ai-failed/ai-review
+# + triage (pipelines/dev_triage.py : size:S|M|L, triage:questions).
 labels:
   - ai-ready
   - ai-working
   - ai-failed
   - ai-review
+  - size:S
+  - size:M
+  - size:L
+  - triage:questions
+  - model:haiku
+  - model:sonnet
+  - model:opus
 
 # Chemins qui doivent exister sur la branche par défaut.
 fichiers:

@@ -69,6 +69,7 @@ def list_issues(repo: str, labels: str | list[str] | None = None,
             "title": i["title"],
             "labels": [lbl["name"] for lbl in i["labels"]],
             "url": i["html_url"],
+            "user": i["user"]["login"],
         }
         for i in brut
         if "pull_request" not in i  # exclure les PR
@@ -121,6 +122,7 @@ def get_issue(repo: str, numero: int) -> dict:
         "body": i.get("body") or "",
         "labels": [lbl["name"] for lbl in i["labels"]],
         "url": i["html_url"],
+        "user": i["user"]["login"],
     }
 
 
