@@ -197,6 +197,18 @@ def conso_par_ticket(limite: int = 15) -> list[tuple]:
         return cur.fetchall()
 
 
+def conso_par_etape() -> list[tuple]:
+    """Conso agrégée par étape (triage, implementation, review…) :
+    (etape, appels, tokens lus, tokens générés, coût $)."""
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT etape, COUNT(*),"
+            "       SUM(tokens_entree + tokens_cache), SUM(tokens_sortie), SUM(cout_usd)"
+            "  FROM conso_claude GROUP BY etape ORDER BY SUM(cout_usd) DESC"
+        )
+        return cur.fetchall()
+
+
 def ci_fix_deja_tentee(repo: str, sha: str) -> bool:
     with _connexion() as conn:
         cur = conn.execute(
