@@ -73,39 +73,62 @@ def charger_repos() -> list[dict]:
     ]
 
 
+async def _tour_leger(repo: str) -> list[dict]:
+    """Le tour léger d'UN repo (notifs, followup, triage) → issues ai-ready.
+
+    Isolé par l'appelant : une erreur ici (hoquet GitHub, course pendant un
+    merge) ne doit ni faire échouer le service ni priver les autres repos de
+    leur tour — vécu le 2026-07-27 pendant une rafale de merges.
+    """
+    issues = github.list_issues(repo, labels=LABEL)
+    nouveaux = [i for i in issues if not state.deja_notifiee(repo, i["number"])]
+
+    for issue in nouveaux:
+        await notify.notify(
+            f"🎫 Ticket à faire — {repo}#{issue['number']} : {issue['title']}\n"
+            f"{issue['url']}"
+        )
+        # Marqué après la notif. Limite connue : si le webhook est down, notify
+        # loggue l'erreur mais l'issue est quand même marquée (pas de re-tentative).
+        state.marquer_notifiee(repo, issue["number"])
+        print(f"[poll] notifié {repo}#{issue['number']} {issue['title']}")
+
+    # --- Phase 2/3 : suivi post-merge, CI, commandes (API seulement)
+    await dev_followup.traiter_merges(repo)
+    await dev_followup.surveiller_ci(repo)
+    await dev_followup.traiter_commandes(repo)
+    await dev_followup.remettre_orphelins_en_file(repo)
+
+    # --- Triage(1/3) : analyse des nouveaux tickets, avant la chaîne de
+    # priorité — léger (raisonnement pur, modèle haiku par défaut).
+    await dev_triage.trier_nouveaux(repo)
+
+    # --- Triage(2/3) : clarification suite à une réponse du propriétaire
+    # sur une issue `triage:questions` — même tour, même légèreté.
+    await dev_triage.clarifier_nouveaux(repo)
+
+    return issues
+
+
 async def poll(repos: list[dict]) -> None:
     a_faire: list[tuple[dict, dict]] = []  # (entrée repo, issue) candidats
+    sautes: list[str] = []
 
     for entree in repos:
         repo = entree["repo"]
-        issues = github.list_issues(repo, labels=LABEL)
-        nouveaux = [i for i in issues if not state.deja_notifiee(repo, i["number"])]
-
-        for issue in nouveaux:
-            await notify.notify(
-                f"🎫 Ticket à faire — {repo}#{issue['number']} : {issue['title']}\n"
-                f"{issue['url']}"
-            )
-            # Marqué après la notif. Limite connue : si le webhook est down, notify
-            # loggue l'erreur mais l'issue est quand même marquée (pas de re-tentative).
-            state.marquer_notifiee(repo, issue["number"])
-            print(f"[poll] notifié {repo}#{issue['number']} {issue['title']}")
-
-        # --- Phase 2/3 : suivi post-merge, CI, commandes (API seulement)
-        await dev_followup.traiter_merges(repo)
-        await dev_followup.surveiller_ci(repo)
-        await dev_followup.traiter_commandes(repo)
-        await dev_followup.remettre_orphelins_en_file(repo)
-
-        # --- Triage(1/3) : analyse des nouveaux tickets, avant la chaîne de
-        # priorité — léger (raisonnement pur, modèle haiku par défaut).
-        await dev_triage.trier_nouveaux(repo)
-
-        # --- Triage(2/3) : clarification suite à une réponse du propriétaire
-        # sur une issue `triage:questions` — même tour, même légèreté.
-        await dev_triage.clarifier_nouveaux(repo)
-
+        try:
+            issues = await _tour_leger(repo)
+        except Exception as exc:  # noqa: BLE001 — frontière d'isolation par repo
+            print(f"[poll] {repo} : tour léger en échec ({exc}) — repo sauté, "
+                  f"le tour suivant rattrape")
+            sautes.append(f"{repo} ({type(exc).__name__})")
+            continue
         a_faire += [(entree, i) for i in issues]
+
+    if sautes:
+        # Une info, pas une alerte : le service n'échoue plus pour un hoquet,
+        # et le prochain tour (5 min) reprend naturellement.
+        await notify.notify("⚠️ poll : tour léger sauté sur " + ", ".join(sautes))
 
     # Quota Claude épuisé (mémorisé par l'exécutant) : notifs et suivi ont eu
     # lieu, mais on saute les actions lourdes jusqu'à la reprise, sans spammer.
