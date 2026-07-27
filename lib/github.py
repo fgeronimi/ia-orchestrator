@@ -82,6 +82,17 @@ def get_default_branch(repo: str) -> str:
     return _get(f"/repos/{repo}")["default_branch"]
 
 
+def list_tree(repo: str, branche: str) -> list[str]:
+    """Chemins de tous les fichiers du repo (arborescence complète, récursive).
+
+    Ignore les dossiers (type "tree") : ne garde que les blobs (fichiers).
+    Tronque silencieusement si GitHub tronque (repo énorme) — géré par
+    l'appelant (`truncated` non exposé, pas de cas d'usage encore).
+    """
+    brut = _get(f"/repos/{repo}/git/trees/{branche}", {"recursive": "1"})
+    return [e["path"] for e in brut.get("tree", []) if e["type"] == "blob"]
+
+
 def list_labels(repo: str) -> list[str]:
     """Noms des labels existants sur le repo."""
     brut = _get(f"/repos/{repo}/labels", {"per_page": 100})
