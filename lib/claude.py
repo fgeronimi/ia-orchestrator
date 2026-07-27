@@ -22,8 +22,8 @@ from dataclasses import dataclass
 
 
 # Alias acceptés par `claude --model`. Vit ici (pas dans data/modeles.yaml) :
-# un label ou un yaml ne doit jamais pouvoir injecter une valeur arbitraire
-# dans la commande CLI.
+# évite qu'un label mal orthographié fasse échouer `claude --model <valeur
+# invalide>` silencieusement en pleine exécution.
 MODELES_AUTORISES = {"haiku", "sonnet", "opus"}
 
 
