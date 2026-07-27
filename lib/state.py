@@ -98,6 +98,14 @@ def _connexion() -> sqlite3.Connection:
         ")"
     )
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS triage_epuise ("  # issues où la clarification a atteint son plafond
+        "  repo TEXT NOT NULL,"
+        "  numero INTEGER NOT NULL,"
+        "  epuise_le TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  PRIMARY KEY (repo, numero)"
+        ")"
+    )
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS forge_signale ("  # écarts de conformité déjà signalés
         "  repo TEXT NOT NULL,"
         "  condition TEXT NOT NULL,"
@@ -139,6 +147,23 @@ def marquer_issue_triee(repo: str, numero: int) -> None:
     with _connexion() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO issues_triees (repo, numero) VALUES (?, ?)",
+            (repo, numero),
+        )
+
+
+def triage_epuise(repo: str, numero: int) -> bool:
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT 1 FROM triage_epuise WHERE repo = ? AND numero = ?",
+            (repo, numero),
+        )
+        return cur.fetchone() is not None
+
+
+def marquer_triage_epuise(repo: str, numero: int) -> None:
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO triage_epuise (repo, numero) VALUES (?, ?)",
             (repo, numero),
         )
 
