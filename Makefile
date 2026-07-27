@@ -54,10 +54,11 @@ status: ## État des services
 logs: ## Suit les logs des deux services (Ctrl-C pour sortir)
 	@journalctl -u orchestrator-bot -u orchestrator-server -f
 
-test: ## Vérifie que les modules importent
+test: ## Vérifie que les modules importent + lance les tests unitaires
 	@$(PYTHON) -c "import bot, server, poll, forge, pipelines.dev_executor, \
-		pipelines.dev_followup, pipelines.dev_statut, pipelines.forge, \
+		pipelines.dev_followup, pipelines.dev_statut, pipelines.dev_triage, pipelines.forge, \
 		lib.claude, lib.github, lib.notify, lib.state, lib.workspace" && echo "imports OK"
+	@$(PYTHON) -m unittest discover -s tests -v
 
 poll: ## Lance un tour du poller GitHub (WATCHED_REPO du .env) ; peut déclencher l'exécution réelle d'un ticket ai-ready
 	@$(PYTHON) poll.py

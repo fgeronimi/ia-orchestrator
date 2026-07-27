@@ -7,6 +7,8 @@ Un tour, pour CHAQUE repo :
   1. notifie les nouvelles issues `ai-ready` (dédup SQLite via lib/state)
   2. suite après merge : nettoie les PR d'agent mergées (dev_followup, léger)
   3. CI : notifie le résultat des check runs des PR d'agent (une fois par sha)
+  4. triage des nouveaux tickets du propriétaire (dev_triage, léger, modèle
+     haiku) : labels `size:*`/`model:*` + commentaire d'analyse ou questions
 puis UNE SEULE action lourde (Claude) tous repos confondus, sous verrou
 fichier, par ordre de priorité :
   1. nouveaux commentaires humains sur une PR d'agent → dev_executor.reviser
@@ -37,7 +39,7 @@ import yaml
 from dotenv import load_dotenv
 
 from lib import github, notify, state
-from pipelines import dev_executor, dev_followup
+from pipelines import dev_executor, dev_followup, dev_triage
 
 LABEL = "ai-ready"
 RACINE = Path(__file__).parent
@@ -89,6 +91,10 @@ async def poll(repos: list[dict]) -> None:
         await dev_followup.traiter_merges(repo)
         await dev_followup.surveiller_ci(repo)
         await dev_followup.traiter_commandes(repo)
+
+        # --- Triage(1/3) : analyse des nouveaux tickets, avant la chaîne de
+        # priorité — léger (raisonnement pur, modèle haiku par défaut).
+        await dev_triage.trier_nouveaux(repo)
 
         a_faire += [(entree, i) for i in issues]
 
