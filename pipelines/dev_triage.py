@@ -47,14 +47,23 @@ QUOTA_ATTENTE_DEFAUT = 30 * 60
 
 MODELES_YAML = Path(__file__).parent.parent / "data" / "modeles.yaml"
 
+# Nombre max de chemins injectés dans le prompt (repo énorme = prompt trop
+# gros pour un gain nul — les fichiers au-delà ne seront simplement jamais
+# cités en fichiers_probables).
+MAX_FICHIERS_ARBORESCENCE = 300
+
 PROMPT_TRIAGE = """Tu es le premier lecteur d'un nouveau ticket, avant qu'un agent de
 développement ne l'implémente sans supervision humaine. Tu n'as pas accès au
-dépôt (raisonnement pur, uniquement le texte du ticket ci-dessous) : évalue si
-un agent raisonnable pourrait l'implémenter tel quel.
+dépôt pour l'explorer (raisonnement pur, uniquement le texte du ticket et
+l'arborescence ci-dessous) : évalue si un agent raisonnable pourrait
+l'implémenter tel quel.
 
 Ticket #{n} : {titre}
 
 {corps}
+
+Arborescence du dépôt (chemins des fichiers) :
+{arborescence}
 
 Consignes :
 - Pose des questions UNIQUEMENT si elles sont BLOQUANTES — impossible pour un
@@ -67,8 +76,8 @@ Consignes :
   majorité des tickets), "opus" (conception délicate, fort risque).
 - resume : 2-3 phrases — ce qu'un agent comprendrait du ticket et
   implémenterait, en signalant les risques ou zones d'ombre non bloquantes.
-- fichiers_probables : chemins probables dans le dépôt, d'après le seul texte
-  du ticket (best effort, [] si tu n'as aucune idée).
+- fichiers_probables : ne cite dans cette liste QUE des chemins présents dans
+  l'arborescence ci-dessus ; si aucun n'est pertinent, laisse la liste vide.
 
 Réponds UNIQUEMENT par un objet JSON strict, sans texte autour, sans balises
 markdown, exactement dans ce format :
@@ -129,9 +138,15 @@ async def trier(repo: str, issue: dict) -> None:
 
     try:
         corps = github.get_issue(repo, n)["body"]
+        branche_defaut = github.get_default_branch(repo)
+        arborescence = github.list_tree(repo, branche_defaut)
+        arbo_tronquee = arborescence[:MAX_FICHIERS_ARBORESCENCE]
         modele = _modele(issue.get("labels", []))
         resultat = await run_claude(
-            PROMPT_TRIAGE.format(n=n, titre=titre, corps=corps or "(pas de description)"),
+            PROMPT_TRIAGE.format(
+                n=n, titre=titre, corps=corps or "(pas de description)",
+                arborescence="\n".join(arbo_tronquee) or "(dépôt vide)",
+            ),
             allowed_tools=[],
             timeout=120,
             model=modele,
@@ -155,6 +170,11 @@ async def trier(repo: str, issue: dict) -> None:
         state.marquer_issue_triee(repo, n)
         print(f"[triage] #{n} : sortie JSON invalide, ignorée")
         return
+
+    # Défense en profondeur : la consigne du prompt ne suffit pas à empêcher
+    # une hallucination, on filtre contre l'arborescence réelle du dépôt.
+    arbo = set(arborescence)
+    analyse["fichiers_probables"] = [f for f in analyse["fichiers_probables"] if f in arbo]
 
     labels = [f"size:{analyse['complexite']}", f"model:{analyse['modele_suggere']}"]
     if not analyse["clair"]:
