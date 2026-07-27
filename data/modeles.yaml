@@ -1,0 +1,9 @@
+# Modèle Claude par défaut, par type de tâche (pipelines/dev_executor.py).
+# alias acceptés par `claude --model` (ex. haiku, sonnet, opus).
+# Absent/vide = modèle par défaut de l'abonnement (aucun changement de
+# comportement tant que ce fichier n'est pas édité).
+executer:
+reviewer:
+reviser:
+corriger_ci:
+resoudre_conflit:

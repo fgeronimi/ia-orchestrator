@@ -59,9 +59,14 @@ def _connexion() -> sqlite3.Connection:
         "  tokens_cache INTEGER NOT NULL,"
         "  tokens_sortie INTEGER NOT NULL,"
         "  cout_usd REAL NOT NULL,"
+        "  modele TEXT,"              # alias --model utilisé, NULL = défaut abonnement
         "  le TEXT NOT NULL DEFAULT (datetime('now'))"
         ")"
     )
+    # Migration douce : bases créées avant l'ajout de la colonne `modele`.
+    colonnes = [l[1] for l in conn.execute("PRAGMA table_info(conso_claude)")]
+    if "modele" not in colonnes:
+        conn.execute("ALTER TABLE conso_claude ADD COLUMN modele TEXT")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS meta ("  # clé/valeur (ex: quota_jusqua)
         "  cle TEXT PRIMARY KEY,"
@@ -114,14 +119,18 @@ def marquer_notifiee(repo: str, numero: int) -> None:
 
 
 def enregistrer_conso(repo: str, numero: int, etape: str,
-                      entree: int, cache: int, sortie: int, cout: float) -> None:
-    """Trace la conso d'un appel Claude, rattachée à un ticket et une étape."""
+                      entree: int, cache: int, sortie: int, cout: float,
+                      modele: str | None = None) -> None:
+    """Trace la conso d'un appel Claude, rattachée à un ticket et une étape.
+
+    modele : alias --model utilisé (None = modèle par défaut de l'abonnement).
+    """
     with _connexion() as conn:
         conn.execute(
             "INSERT INTO conso_claude"
-            "  (repo, numero, etape, tokens_entree, tokens_cache, tokens_sortie, cout_usd)"
-            "  VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (repo, numero, etape, entree, cache, sortie, cout),
+            "  (repo, numero, etape, tokens_entree, tokens_cache, tokens_sortie, cout_usd, modele)"
+            "  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (repo, numero, etape, entree, cache, sortie, cout, modele),
         )
 
 

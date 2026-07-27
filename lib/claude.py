@@ -21,6 +21,12 @@ import re
 from dataclasses import dataclass
 
 
+# Alias acceptés par `claude --model`. Vit ici (pas dans data/modeles.yaml) :
+# un label ou un yaml ne doit jamais pouvoir injecter une valeur arbitraire
+# dans la commande CLI.
+MODELES_AUTORISES = {"haiku", "sonnet", "opus"}
+
+
 class ClaudeError(RuntimeError):
     pass
 
@@ -55,6 +61,22 @@ def _detecter_quota(texte: str) -> None:
         raise ClaudeQuotaError("crédit Claude épuisé")
 
 
+def modele_depuis_label(labels: list[str]) -> str | None:
+    """Premier alias valide trouvé dans un label `model:<alias>`.
+
+    Un label hors liste blanche (MODELES_AUTORISES) est ignoré (log) plutôt
+    que transmis tel quel à la CLI.
+    """
+    for label in labels:
+        if not label.startswith("model:"):
+            continue
+        alias = label.removeprefix("model:").strip().lower()
+        if alias in MODELES_AUTORISES:
+            return alias
+        print(f"[claude] label ignoré (alias hors liste blanche) : {label!r}")
+    return None
+
+
 def _parser_sortie(sortie: str) -> ResultatClaude:
     """Parse la sortie JSON du CLI. Lève ClaudeQuotaError/ClaudeError si is_error."""
     try:
@@ -84,12 +106,15 @@ async def run_claude(
     cwd: str | None = None,
     timeout: int = 600,
     allowed_tools: list[str] | None = None,
+    model: str | None = None,
 ) -> ResultatClaude:
     """Exécute `claude -p <prompt>` et retourne texte + conso (ResultatClaude).
 
     - cwd : répertoire de travail (repo du pipeline concerné)
     - allowed_tools : restreint les outils de Claude Code
       (ex: ["Read", "Grep"] pour un agent en lecture seule)
+    - model : alias passé à `--model` (ex: "haiku"). None = modèle par défaut
+      de l'abonnement (comportement actuel, inchangé).
     """
     if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         raise ClaudeError("CLAUDE_CODE_OAUTH_TOKEN manquant dans l'environnement")
@@ -97,6 +122,8 @@ async def run_claude(
     cmd = ["claude", "-p", prompt, "--output-format", "json"]
     if allowed_tools:
         cmd += ["--allowed-tools", ",".join(allowed_tools)]
+    if model:
+        cmd += ["--model", model]
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
