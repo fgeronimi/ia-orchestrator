@@ -35,6 +35,36 @@ ANALYSE_FLOUE = {
     "questions": ["Dans quel écran ajouter le bouton ?"],
 }
 
+# --- Fixtures de la boucle de clarification (phase 2) -----------------------
+
+ISSUE_QUESTIONS = {
+    "number": 1, "title": "Ajoute un bouton", "url": "u", "user": "acme",
+    "body": "Corps du ticket.", "labels": ["triage:questions", "size:M", "model:sonnet"],
+}
+
+COMMENT_OWNER = {"id": 501, "body": "Dans le header.", "user": "acme"}
+COMMENT_BOT = {"id": 502, "body": "🤖 **Raffinement** — précisions nécessaires", "user": "acme"}
+COMMENT_SLASH = {"id": 503, "body": "/ticket autre chose", "user": "acme"}
+COMMENT_TIERS = {"id": 504, "body": "je réponds à ta place", "user": "quelqu-un-d-autre"}
+
+ANALYSE_CLARIFIEE = {
+    "clair": True,
+    "resume": "Le bouton va dans le header.",
+    "complexite": "S",
+    "modele_suggere": "haiku",
+    "fichiers_probables": ["src/header.py"],
+    "questions": [],
+}
+
+ANALYSE_TOUJOURS_FLOUE = {
+    "clair": False,
+    "resume": "Toujours pas clair où précisément.",
+    "complexite": "M",
+    "modele_suggere": "sonnet",
+    "fichiers_probables": [],
+    "questions": ["À quel endroit exact dans le header ?"],
+}
+
 
 def _resultat(texte: str) -> ResultatClaude:
     return ResultatClaude(texte=texte, tokens_entree=10, tokens_cache=0,
@@ -52,11 +82,14 @@ class DevTriageTest(unittest.IsolatedAsyncioTestCase):
             patch("pipelines.dev_triage.github.get_issue",
                  return_value={**ISSUE, "body": "Corps du ticket."}),
             patch("pipelines.dev_triage.github.add_labels"),
+            patch("pipelines.dev_triage.github.remove_label"),
             patch("pipelines.dev_triage.github.comment_issue"),
+            patch("pipelines.dev_triage.github.list_comments", return_value=[]),
             patch("pipelines.dev_triage.notify.notify", new_callable=AsyncMock),
         ]
-        (self.mock_get_issue, self.mock_add_labels,
-         self.mock_comment, self.mock_notify) = (p.start() for p in self._patches)
+        (self.mock_get_issue, self.mock_add_labels, self.mock_remove_label,
+         self.mock_comment, self.mock_list_comments, self.mock_notify) = (
+            p.start() for p in self._patches)
 
     def tearDown(self):
         for p in self._patches:
@@ -174,6 +207,124 @@ class DevTriageTest(unittest.IsolatedAsyncioTestCase):
         state.bloquer_quota(9_999_999_999)
         with patch("pipelines.dev_triage.github.list_issues") as mock_list:
             await dev_triage.trier_nouveaux(REPO)
+        mock_list.assert_not_called()
+
+    # --- clarifier() : re-triage suite à une réponse du propriétaire -------
+
+    async def test_questions_levees_retire_le_label_et_maj_size_model(self):
+        self.mock_get_issue.return_value = dict(ISSUE_QUESTIONS)
+        commentaires = [{**COMMENT_OWNER, "cle": "issue-501"}]
+        with patch("pipelines.dev_triage.run_claude",
+                   new=AsyncMock(return_value=_resultat(json.dumps(ANALYSE_CLARIFIEE)))):
+            await dev_triage.clarifier(REPO, ISSUE_QUESTIONS, commentaires)
+
+        self.mock_remove_label.assert_any_call(REPO, 1, dev_triage.LABEL_QUESTIONS)
+        self.mock_remove_label.assert_any_call(REPO, 1, "size:M")
+        self.mock_remove_label.assert_any_call(REPO, 1, "model:sonnet")
+        self.mock_add_labels.assert_any_call(REPO, 1, ["size:S"])
+        self.mock_add_labels.assert_any_call(REPO, 1, ["model:haiku"])
+        corps = self.mock_comment.call_args.args[2]
+        self.assertIn("prêt pour", corps)
+        self.assertIn("header", corps)
+        self.mock_notify.assert_awaited_once()
+        self.assertTrue(state.commentaire_deja_vu(REPO, "issue-501"))
+
+    async def test_questions_levees_sans_changement_estimation_ne_touche_pas_les_labels(self):
+        self.mock_get_issue.return_value = dict(ISSUE_QUESTIONS, labels=["triage:questions", "size:S", "model:haiku"])
+        commentaires = [{**COMMENT_OWNER, "cle": "issue-501"}]
+        with patch("pipelines.dev_triage.run_claude",
+                   new=AsyncMock(return_value=_resultat(json.dumps(ANALYSE_CLARIFIEE)))):
+            await dev_triage.clarifier(REPO, ISSUE_QUESTIONS, commentaires)
+
+        self.mock_remove_label.assert_called_once_with(REPO, 1, dev_triage.LABEL_QUESTIONS)
+        self.mock_add_labels.assert_not_called()
+
+    async def test_encore_flou_repose_des_questions_sans_atteindre_le_plafond(self):
+        self.mock_get_issue.return_value = dict(ISSUE_QUESTIONS)
+        commentaires = [{**COMMENT_OWNER, "cle": "issue-501"}]
+        with patch("pipelines.dev_triage.run_claude",
+                   new=AsyncMock(return_value=_resultat(json.dumps(ANALYSE_TOUJOURS_FLOUE)))):
+            await dev_triage.clarifier(REPO, ISSUE_QUESTIONS, commentaires)
+
+        self.mock_remove_label.assert_not_called()
+        corps = self.mock_comment.call_args.args[2]
+        self.assertIn("À quel endroit exact", corps)
+        self.assertFalse(state.triage_epuise(REPO, 1))
+        self.assertTrue(state.commentaire_deja_vu(REPO, "issue-501"))
+
+    async def test_plafond_de_deux_tours_marque_epuise_et_reste_silencieux(self):
+        self.mock_get_issue.return_value = dict(ISSUE_QUESTIONS)
+
+        with patch("pipelines.dev_triage.run_claude",
+                   new=AsyncMock(return_value=_resultat(json.dumps(ANALYSE_TOUJOURS_FLOUE)))):
+            await dev_triage.clarifier(REPO, ISSUE_QUESTIONS, [{**COMMENT_OWNER, "cle": "issue-501"}])
+            self.assertFalse(state.triage_epuise(REPO, 1))
+
+            self.mock_comment.reset_mock()
+            await dev_triage.clarifier(REPO, ISSUE_QUESTIONS, [{**COMMENT_OWNER, "id": 505, "cle": "issue-505"}])
+
+        self.assertTrue(state.triage_epuise(REPO, 1))
+        self.mock_comment.assert_not_called()  # silence : pas de 3e tour de questions
+
+    async def test_issue_deja_epuisee_ignore_sans_appeler_claude(self):
+        state.marquer_triage_epuise(REPO, 1)
+        commentaires = [{**COMMENT_OWNER, "cle": "issue-501"}]
+        with patch("pipelines.dev_triage.run_claude", new=AsyncMock()) as mock_run_claude:
+            await dev_triage.clarifier(REPO, ISSUE_QUESTIONS, commentaires)
+
+        mock_run_claude.assert_not_called()
+        self.assertTrue(state.commentaire_deja_vu(REPO, "issue-501"))
+
+    async def test_quota_epuise_ne_marque_pas_les_commentaires_vus(self):
+        commentaires = [{**COMMENT_OWNER, "cle": "issue-501"}]
+        with patch("pipelines.dev_triage.run_claude",
+                   new=AsyncMock(side_effect=ClaudeQuotaError("quota épuisé"))):
+            await dev_triage.clarifier(REPO, ISSUE_QUESTIONS, commentaires)
+
+        self.assertFalse(state.commentaire_deja_vu(REPO, "issue-501"))
+        self.mock_notify.assert_awaited_once()
+
+    # --- clarifier_nouveaux() : sélection des candidats ---------------------
+
+    async def test_clarifier_nouveaux_owner_only_et_ignore_bot_et_commandes(self):
+        self.mock_list_comments.return_value = [COMMENT_BOT, COMMENT_SLASH, COMMENT_TIERS]
+        with patch("pipelines.dev_triage.github.list_issues", return_value=[ISSUE_QUESTIONS]), \
+             patch("pipelines.dev_triage.clarifier", new=AsyncMock()) as mock_clarifier:
+            await dev_triage.clarifier_nouveaux(REPO)
+        mock_clarifier.assert_not_called()
+
+    async def test_clarifier_nouveaux_detecte_un_commentaire_neuf_du_proprietaire(self):
+        self.mock_list_comments.return_value = [COMMENT_BOT, COMMENT_OWNER]
+        with patch("pipelines.dev_triage.github.list_issues", return_value=[ISSUE_QUESTIONS]), \
+             patch("pipelines.dev_triage.clarifier", new=AsyncMock()) as mock_clarifier:
+            await dev_triage.clarifier_nouveaux(REPO)
+
+        mock_clarifier.assert_awaited_once()
+        args = mock_clarifier.call_args.args
+        self.assertEqual(args[0], REPO)
+        self.assertEqual(args[1], ISSUE_QUESTIONS)
+        self.assertEqual([c["id"] for c in args[2]], [501])
+
+    async def test_clarifier_nouveaux_dedup_commentaire_deja_vu(self):
+        state.marquer_commentaire(REPO, "issue-501")
+        self.mock_list_comments.return_value = [COMMENT_OWNER]
+        with patch("pipelines.dev_triage.github.list_issues", return_value=[ISSUE_QUESTIONS]), \
+             patch("pipelines.dev_triage.clarifier", new=AsyncMock()) as mock_clarifier:
+            await dev_triage.clarifier_nouveaux(REPO)
+        mock_clarifier.assert_not_called()
+
+    async def test_clarifier_nouveaux_saute_les_issues_deja_epuisees(self):
+        state.marquer_triage_epuise(REPO, 1)
+        self.mock_list_comments.return_value = [COMMENT_OWNER]
+        with patch("pipelines.dev_triage.github.list_issues", return_value=[ISSUE_QUESTIONS]), \
+             patch("pipelines.dev_triage.clarifier", new=AsyncMock()) as mock_clarifier:
+            await dev_triage.clarifier_nouveaux(REPO)
+        mock_clarifier.assert_not_called()
+
+    async def test_clarifier_nouveaux_quota_bloque_ne_liste_pas_les_issues(self):
+        state.bloquer_quota(9_999_999_999)
+        with patch("pipelines.dev_triage.github.list_issues") as mock_list:
+            await dev_triage.clarifier_nouveaux(REPO)
         mock_list.assert_not_called()
 
 

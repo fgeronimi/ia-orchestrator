@@ -9,6 +9,9 @@ Un tour, pour CHAQUE repo :
   3. CI : notifie le résultat des check runs des PR d'agent (une fois par sha)
   4. triage des nouveaux tickets du propriétaire (dev_triage, léger, modèle
      haiku) : labels `size:*`/`model:*` + commentaire d'analyse ou questions
+  5. clarification (dev_triage, léger) : réponse du propriétaire sur une
+     issue `triage:questions` → re-triage avec le fil complet, plafonné à
+     2 tours
 puis UNE SEULE action lourde (Claude) tous repos confondus, sous verrou
 fichier, par ordre de priorité :
   1. nouveaux commentaires humains sur une PR d'agent → dev_executor.reviser
@@ -95,6 +98,10 @@ async def poll(repos: list[dict]) -> None:
         # --- Triage(1/3) : analyse des nouveaux tickets, avant la chaîne de
         # priorité — léger (raisonnement pur, modèle haiku par défaut).
         await dev_triage.trier_nouveaux(repo)
+
+        # --- Triage(2/3) : clarification suite à une réponse du propriétaire
+        # sur une issue `triage:questions` — même tour, même légèreté.
+        await dev_triage.clarifier_nouveaux(repo)
 
         a_faire += [(entree, i) for i in issues]
 

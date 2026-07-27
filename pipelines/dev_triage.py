@@ -18,6 +18,13 @@ issue n'est triée qu'une fois.
 Sortie JSON stricte validée ; un parse raté est loggué et ignoré, jamais de
 commentaire poubelle sur le ticket.
 
+Phase 2 — boucle de clarification : quand le propriétaire répond sur une
+issue `triage:questions`, `clarifier_nouveaux()` re-triage avec le corps et
+le fil complet des commentaires. Questions levées → label retiré, taille/
+modèle mis à jour si l'estimation change, commentaire « prêt pour ai-ready » ;
+sinon nouvelles questions. Plafond de 2 tours de clarification : au-delà, le
+triage se tait définitivement pour cette issue (state.triage_epuise).
+
 Appelé par le poller (poll.py), après la détection des nouvelles issues et
 avant la chaîne de priorité des actions lourdes : léger, pas sous le verrou
 `state/executor.lock`.
@@ -38,8 +45,16 @@ LABEL_READY = "ai-ready"
 LABEL_WORKING = "ai-working"
 LABEL_QUESTIONS = "triage:questions"
 PREFIX_FORGE = "forge:"  # titre des issues créées par pipelines/forge.py
+# Les commentaires de l'orchestrateur partent avec le même PAT que l'humain
+# (même login) : le préfixe 🤖 est ce qui les distingue des vrais retours
+# (même convention que dev_executor.PREFIX_BOT).
+PREFIX_BOT = "🤖"
 
 COMPLEXITES = {"S", "M", "L"}
+
+ETAPE_CLARIFICATION = "triage-clarification"
+# Au-delà, un ticket qui résiste à deux clarifications se discute ailleurs.
+MAX_TOURS_CLARIFICATION = 2
 
 # Sans heure de reprise annoncée par le CLI, on retente au bout de 30 min
 # (même défaut que dev_executor, dupliqué pour rester un fichier autonome).
@@ -69,6 +84,31 @@ Consignes :
   implémenterait, en signalant les risques ou zones d'ombre non bloquantes.
 - fichiers_probables : chemins probables dans le dépôt, d'après le seul texte
   du ticket (best effort, [] si tu n'as aucune idée).
+
+Réponds UNIQUEMENT par un objet JSON strict, sans texte autour, sans balises
+markdown, exactement dans ce format :
+{{"clair": bool, "resume": "...", "complexite": "S|M|L", "modele_suggere": "haiku|sonnet|opus", "fichiers_probables": ["..."], "questions": ["..."]}}"""
+
+PROMPT_CLARIFICATION = """Tu avais jugé ce ticket flou et posé des questions bloquantes. Le
+propriétaire a répondu. Réévalue si un agent raisonnable pourrait maintenant
+l'implémenter, à la lumière de tout le fil ci-dessous.
+
+Ticket #{n} : {titre}
+
+Corps initial :
+{corps}
+
+Fil des commentaires (du plus ancien au plus récent) :
+{fil}
+
+Consignes :
+- Si les réponses lèvent les points bloquants, considère le ticket clair
+  (clair=true, questions=[]).
+- Sinon, questions UNIQUEMENT sur ce qui reste bloquant. 3 maximum.
+- complexite et modele_suggere : réévalue-les à la lumière du fil (même
+  échelle qu'au premier triage : S/M/L, haiku/sonnet/opus).
+- resume : 2-3 phrases sur l'état de compréhension actuel du ticket.
+- fichiers_probables : chemins probables (best effort, [] si aucune idée).
 
 Réponds UNIQUEMENT par un objet JSON strict, sans texte autour, sans balises
 markdown, exactement dans ce format :
@@ -207,6 +247,141 @@ async def trier_nouveaux(repo: str) -> None:
         if LABEL_READY in issue["labels"] or LABEL_WORKING in issue["labels"]:
             continue
         await trier(repo, issue)
+
+
+# --- Phase 2 : boucle de clarification --------------------------------------
+
+def _label_par_prefixe(labels: list[str], prefixe: str) -> str | None:
+    return next((l for l in labels if l.startswith(prefixe)), None)
+
+
+def _maj_label_taille_modele(repo: str, n: int, labels_actuels: list[str], analyse: dict) -> None:
+    """Retire/pose size:/model: seulement s'ils changent (garde l'historique propre)."""
+    nouvelle_taille = f"size:{analyse['complexite']}"
+    nouveau_modele = f"model:{analyse['modele_suggere']}"
+
+    taille_actuelle = _label_par_prefixe(labels_actuels, "size:")
+    if taille_actuelle != nouvelle_taille:
+        if taille_actuelle:
+            github.remove_label(repo, n, taille_actuelle)
+        github.add_labels(repo, n, [nouvelle_taille])
+
+    modele_actuel = _label_par_prefixe(labels_actuels, "model:")
+    if modele_actuel != nouveau_modele:
+        if modele_actuel:
+            github.remove_label(repo, n, modele_actuel)
+        github.add_labels(repo, n, [nouveau_modele])
+
+
+async def clarifier(repo: str, issue: dict, nouveaux: list[dict]) -> None:
+    """Re-triage d'une issue `triage:questions` suite à une réponse du propriétaire.
+
+    `nouveaux` : commentaires du propriétaire pas encore vus (dédup
+    state.commentaires_vus). Le fil complet (corps + tous les commentaires)
+    est donné à Claude pour réévaluer la clarté du ticket.
+    """
+    n = issue["number"]
+    titre = issue["title"]
+
+    if state.triage_epuise(repo, n):
+        for c in nouveaux:
+            state.marquer_commentaire(repo, c["cle"])
+        return
+
+    try:
+        issue_fraiche = github.get_issue(repo, n)
+        corps = issue_fraiche["body"]
+        labels_actuels = issue_fraiche["labels"]
+        fil = "\n\n".join(f"{c['user']} : {c['body']}" for c in github.list_comments(repo, n))
+        modele = _modele(labels_actuels)
+        resultat = await run_claude(
+            PROMPT_CLARIFICATION.format(n=n, titre=titre, corps=corps or "(pas de description)", fil=fil),
+            allowed_tools=[],
+            timeout=120,
+            model=modele,
+        )
+    except ClaudeQuotaError as exc:
+        # Pas marqués vus : la clarification repartira avec le quota.
+        reprise = _bloquer_quota(exc)
+        await notify.notify(f"⏳ #{n} : {exc} — clarification reportée vers {reprise}")
+        return
+    except Exception as exc:
+        for c in nouveaux:
+            state.marquer_commentaire(repo, c["cle"])
+        print(f"[triage] #{n} : clarification — échec {exc}")
+        return
+
+    state.enregistrer_conso(repo, n, ETAPE_CLARIFICATION, resultat.tokens_entree,
+                            resultat.tokens_cache, resultat.tokens_sortie,
+                            resultat.cout_usd, modele)
+
+    analyse = _parser_analyse(resultat.texte)
+    if analyse is None:
+        for c in nouveaux:
+            state.marquer_commentaire(repo, c["cle"])
+        print(f"[triage] #{n} : clarification — sortie JSON invalide, ignorée")
+        return
+
+    tours = state.compter_conso(repo, n, ETAPE_CLARIFICATION)  # inclut cet appel
+
+    try:
+        if analyse["clair"]:
+            _maj_label_taille_modele(repo, n, labels_actuels, analyse)
+            github.remove_label(repo, n, LABEL_QUESTIONS)
+            commentaire = (f"🤖 **Clarification** — prêt pour `{LABEL_READY}` "
+                           f"(taille {analyse['complexite']}, modèle {analyse['modele_suggere']})"
+                           f"\n\n{analyse['resume']}")
+            github.comment_issue(repo, n, commentaire)
+            await notify.notify(f"✅ #{n} : questions levées, prêt pour {LABEL_READY}")
+        elif tours >= MAX_TOURS_CLARIFICATION:
+            state.marquer_triage_epuise(repo, n)
+            await notify.notify(
+                f"🔇 #{n} : toujours flou après {MAX_TOURS_CLARIFICATION} tours de "
+                f"clarification — triage silencieux, à discuter autrement"
+            )
+        else:
+            questions = "\n".join(f"- {q}" for q in analyse["questions"])
+            commentaire = (f"🤖 **Clarification** — encore des précisions nécessaires "
+                           f"({tours}/{MAX_TOURS_CLARIFICATION})\n\n{analyse['resume']}\n\n{questions}")
+            github.comment_issue(repo, n, commentaire)
+            await notify.notify(f"🔎 #{n} : nouvelles questions ({tours}/{MAX_TOURS_CLARIFICATION})")
+    except Exception as exc:
+        await notify.notify(f"⚠️ #{n} : clarification — échec écriture GitHub (labels/commentaire) — {exc}")
+        return
+
+    for c in nouveaux:
+        state.marquer_commentaire(repo, c["cle"])
+
+
+async def clarifier_nouveaux(repo: str) -> None:
+    """Repère les issues `triage:questions` avec une réponse neuve du propriétaire.
+
+    Owner-only (même contrainte que dev_executor.chercher_revision : sur un
+    repo public, seul le propriétaire pilote un agent via commentaire).
+    Écarte les commentaires de l'orchestrateur (préfixe 🤖) et les commandes
+    (`/…`). Dédup partagée avec la boucle de révision (state.commentaires_vus,
+    clé `issue-<id>` : les ids de commentaires sont uniques dans tout le repo).
+    """
+    if state.quota_bloque_jusqua() is not None:
+        return
+    proprietaire = repo.split("/")[0]
+    for issue in github.list_issues(repo, labels=LABEL_QUESTIONS, state="open"):
+        n = issue["number"]
+        if state.triage_epuise(repo, n):
+            continue
+        nouveaux = []
+        for c in github.list_comments(repo, n):
+            if c["user"] != proprietaire:
+                continue
+            corps = (c["body"] or "").strip()
+            if corps.startswith(PREFIX_BOT) or corps.startswith("/"):
+                continue
+            cle = f"issue-{c['id']}"
+            if state.commentaire_deja_vu(repo, cle):
+                continue
+            nouveaux.append({**c, "cle": cle})
+        if nouveaux:
+            await clarifier(repo, issue, nouveaux)
 
 
 if __name__ == "__main__":
