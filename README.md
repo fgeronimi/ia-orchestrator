@@ -64,6 +64,9 @@ L'état vit dans les **labels GitHub** de l'issue :
   `ai-ready` reste un geste humain).
 - **Conso tracée par ticket** : tokens et coût estimé de chaque appel Claude,
   par étape (`implementation`, `auto-review`, `revision`, `ci-fix`).
+- **Modèle Claude configurable** : défaut par type de tâche dans
+  `data/modeles.yaml`, ou override par ticket avec un label `model:<alias>`
+  (`haiku`/`sonnet`/`opus`) ; le modèle utilisé est tracé avec la conso.
 - **Notifications Discord** à chaque étape (🎫 🔨 🔍 ✏️ 🔧 ✅ 🧹 ⚠️ ⏳ 🚨), et un
   bot interrogeable : `@bot conso`, `@bot statut`.
 - **Robustesse** : quota d'abonnement géré (remise en file + reprise), échecs
@@ -149,6 +152,18 @@ version: 1
 labels: [ai-ready, ai-working, ai-failed, ai-review]
 fichiers: [CLAUDE.md]
 protection_main: true
+```
+
+Modèle Claude par défaut, par type de tâche (`data/modeles.yaml`) — vide =
+modèle par défaut de l'abonnement, aucun changement de comportement tant que
+le fichier n'est pas édité :
+
+```yaml
+executer:
+reviewer:
+reviser:
+corriger_ci:
+resoudre_conflit:
 ```
 
 ## Au quotidien

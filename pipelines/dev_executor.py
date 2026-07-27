@@ -23,9 +23,12 @@ Usage manuel (test live d'un ticket) :
 
 import time
 from datetime import datetime
+from pathlib import Path
+
+import yaml
 
 from lib import github, notify, state, workspace
-from lib.claude import ClaudeQuotaError, ResultatClaude, run_claude
+from lib.claude import ClaudeQuotaError, ResultatClaude, modele_depuis_label, run_claude
 
 LABEL_READY = "ai-ready"
 LABEL_WORKING = "ai-working"
@@ -116,13 +119,42 @@ DIFF_MAX = 40_000
 # Sans heure de reprise annoncée par le CLI, on retente au bout de 30 min.
 QUOTA_ATTENTE_DEFAUT = 30 * 60
 
+# Défauts de modèle par type de tâche (data/modeles.yaml) — voir _modele().
+MODELES_YAML = Path(__file__).parent.parent / "data" / "modeles.yaml"
 
-def _tracer_conso(repo: str, n: int, etape: str, r: ResultatClaude) -> str:
+
+def _modeles_defaut() -> dict:
+    if not MODELES_YAML.exists():
+        return {}
+    return yaml.safe_load(MODELES_YAML.read_text()) or {}
+
+
+def _modele(etape: str, labels: list[str]) -> str | None:
+    """Modèle à utiliser pour cette étape de tâche.
+
+    Priorité : label `model:<alias>` du ticket (liste blanche dans lib.claude)
+    > défaut de data/modeles.yaml pour cette étape > None (modèle par défaut
+    de l'abonnement, comportement actuel).
+    """
+    return modele_depuis_label(labels) or _modeles_defaut().get(etape) or None
+
+
+def _labels_ticket(repo: str, n: int) -> list[str]:
+    """Labels de l'issue #n (pour l'override `model:<alias>`) — [] si illisible."""
+    try:
+        return github.get_issue(repo, n)["labels"]
+    except github.GitHubError:
+        return []
+
+
+def _tracer_conso(repo: str, n: int, etape: str, r: ResultatClaude,
+                  modele: str | None = None) -> str:
     """Enregistre la conso d'un appel et retourne son résumé pour les notifs."""
     state.enregistrer_conso(repo, n, etape, r.tokens_entree, r.tokens_cache,
-                            r.tokens_sortie, r.cout_usd)
+                            r.tokens_sortie, r.cout_usd, modele)
     lus = (r.tokens_entree + r.tokens_cache) / 1000
-    return f"🪙 {etape} : {lus:.0f}k lus / {r.tokens_sortie/1000:.1f}k générés (~{r.cout_usd:.2f} $)"
+    prefixe = f"🪙 {etape}" + (f" ({modele})" if modele else "")
+    return f"{prefixe} : {lus:.0f}k lus / {r.tokens_sortie/1000:.1f}k générés (~{r.cout_usd:.2f} $)"
 
 
 def _bloquer_quota(exc: ClaudeQuotaError) -> str:
@@ -133,7 +165,8 @@ def _bloquer_quota(exc: ClaudeQuotaError) -> str:
     return datetime.fromtimestamp(reprise).strftime("%H:%M")
 
 
-async def _auto_review(repo: str, path, base: str, n: int, titre: str, pr: dict) -> None:
+async def _auto_review(repo: str, path, base: str, n: int, titre: str, pr: dict,
+                       labels: list[str] | None = None) -> None:
     """Relecture du diff par Claude (lecture seule), postée en commentaire de PR.
 
     Un échec ici ne fait pas échouer le run : la PR est déjà ouverte.
@@ -146,14 +179,16 @@ async def _auto_review(repo: str, path, base: str, n: int, titre: str, pr: dict)
         if exclus:
             liste = "\n".join(f"- {e}" for e in exclus)
             note_exclusions = f"\nAssets exclus du diff (trop volumineux) :\n{liste}\n"
+        modele = _modele("reviewer", labels or [])
         resultat = await run_claude(
             PROMPT_REVIEW.format(n=n, titre=titre, base=base, diff=diff,
                                  note_exclusions=note_exclusions),
             cwd=str(path),
             allowed_tools=["Read"],
             timeout=300,
+            model=modele,
         )
-        conso = _tracer_conso(repo, n, "auto-review", resultat)
+        conso = _tracer_conso(repo, n, "auto-review", resultat, modele)
         # comment_issue marche pour les PR : même endpoint issues/commentaires.
         github.comment_issue(repo, pr["number"], f"🤖 **Auto-review**\n\n{resultat.texte}")
         await notify.notify(f"🧐 #{n} : auto-review postée sur la PR #{pr['number']}\n{conso}")
@@ -183,14 +218,17 @@ async def executer(repo: str, issue: dict, timeout: int | None = None) -> None:
 
         # --- Increment 1b : Claude implémente le ticket -------------------
         corps = github.get_issue(repo, n)["body"]
+        labels = issue.get("labels", [])
+        modele = _modele("executer", labels)
         await notify.notify(f"🔨 #{n} : implémentation par Claude…")
         resultat = await run_claude(
             PROMPT_IMPL.format(n=n, titre=titre, corps=corps or "(pas de description)"),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
             timeout=timeout,
+            model=modele,
         )
-        conso = _tracer_conso(repo, n, "implementation", resultat)
+        conso = _tracer_conso(repo, n, "implementation", resultat, modele)
         resume = resultat.texte
 
         if not workspace.commit_tout(path, f"ai: #{n} {titre}"):
@@ -212,7 +250,7 @@ async def executer(repo: str, issue: dict, timeout: int | None = None) -> None:
         else:
             await notify.notify(f"🔄 #{n} : PR #{pr['number']} mise à jour → {pr['html_url']}\n{conso}")
 
-        await _auto_review(repo, path, base, n, titre, pr)
+        await _auto_review(repo, path, base, n, titre, pr, labels)
 
     except ClaudeQuotaError as exc:
         # Ticket remis en file : il sera repris quand le quota reviendra.
@@ -295,13 +333,15 @@ async def reviser(repo: str, pr: dict, commentaires: list[dict],
             f"- {c['body']}" + (f"\n  (sur le fichier {c['path']})" if c.get("path") else "")
             for c in commentaires
         )
+        modele = _modele("reviser", _labels_ticket(repo, n))
         resultat = await run_claude(
             PROMPT_REVISION.format(pr=num_pr, n=n, titre=pr["title"], commentaires=texte),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
             timeout=timeout,
+            model=modele,
         )
-        conso = _tracer_conso(repo, n, "revision", resultat)
+        conso = _tracer_conso(repo, n, "revision", resultat, modele)
         resume = resultat.texte
 
         if workspace.commit_tout(path, f"ai: #{n} révision (PR #{num_pr})"):
@@ -350,7 +390,7 @@ async def reviewer_pr(repo: str, pr: dict) -> None:
         base = github.get_default_branch(repo) if not pr.get("base") else pr["base"]
         path = workspace.preparer(repo, base)
         workspace.basculer_sur(path, repo, pr["head"])
-        await _auto_review(repo, path, base, num, pr["title"], pr)
+        await _auto_review(repo, path, base, num, pr["title"], pr, pr.get("labels"))
     except Exception as exc:
         await notify.notify(f"⚠️ PR #{num} : review à la demande échouée — {exc}")
     finally:
@@ -404,14 +444,16 @@ async def resoudre_conflit(repo: str, pr: dict, timeout: int | None = None) -> N
         fichiers = workspace.fichiers_en_conflit(path)
         await notify.notify(f"🔀 PR #{num_pr} : conflit avec {base} "
                             f"({len(fichiers)} fichier(s)), résolution par Claude…")
+        modele = _modele("resoudre_conflit", _labels_ticket(repo, n))
         resultat = await run_claude(
             PROMPT_CONFLIT.format(base=base, pr=num_pr, n=n, titre=pr["title"],
                                   fichiers="\n".join(f"- {f}" for f in fichiers)),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
             timeout=timeout or 600,
+            model=modele,
         )
-        conso = _tracer_conso(repo, n, "conflit", resultat)
+        conso = _tracer_conso(repo, n, "conflit", resultat, modele)
 
         restants = workspace.marqueurs_restants(path, fichiers)
         if restants:
@@ -470,14 +512,16 @@ async def corriger_ci(repo: str, pr: dict, echecs: list[dict], log: str,
         path = workspace.preparer(repo, base)
         workspace.basculer_sur(path, repo, branche)
 
+        modele = _modele("corriger_ci", _labels_ticket(repo, n))
         resultat = await run_claude(
             PROMPT_CI.format(pr=num_pr, n=n, titre=pr["title"], noms=noms,
                              log=log or "(log indisponible)"),
             cwd=str(path),
             allowed_tools=["Read", "Edit", "Write", "Bash"],
             timeout=timeout or 600,
+            model=modele,
         )
-        conso = _tracer_conso(repo, n, "ci-fix", resultat)
+        conso = _tracer_conso(repo, n, "ci-fix", resultat, modele)
 
         if workspace.commit_tout(path, f"ai: #{n} répare la CI (PR #{num_pr})"):
             workspace.pousser(path, repo, branche)

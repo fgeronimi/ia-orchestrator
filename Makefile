@@ -71,7 +71,8 @@ conso: ## Conso Claude par ticket (tokens lus/générés, coût estimé)
 		"SELECT repo || '#' || numero AS ticket, COUNT(*) AS appels, \
 		 printf('%.0fk', SUM(tokens_entree + tokens_cache)/1000.0) AS lus, \
 		 printf('%.1fk', SUM(tokens_sortie)/1000.0) AS generes, \
-		 printf('%.2f $$', SUM(cout_usd)) AS cout \
+		 printf('%.2f $$', SUM(cout_usd)) AS cout, \
+		 COALESCE(GROUP_CONCAT(DISTINCT modele), '(défaut)') AS modele \
 		 FROM conso_claude GROUP BY repo, numero ORDER BY MAX(le) DESC"
 
 install-timer: ## Installe les timers systemd (sync git + poll GitHub + forge quotidienne)
