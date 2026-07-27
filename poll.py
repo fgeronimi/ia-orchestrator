@@ -5,7 +5,8 @@ Repos surveillés : `data/repos.yaml` (clé `repos`), sinon `WATCHED_REPO` du
 
 Un tour, pour CHAQUE repo :
   1. notifie les nouvelles issues `ai-ready` (dédup SQLite via lib/state)
-  2. suite après merge : nettoie les PR d'agent mergées (dev_followup, léger)
+  2. suite après merge : nettoie les PR d'agent mergées (dev_followup, léger),
+     et remet en file les ai-working orphelins (crash dur de l'exécutant)
   3. CI : notifie le résultat des check runs des PR d'agent (une fois par sha)
   4. triage des nouveaux tickets du propriétaire (dev_triage, léger, modèle
      haiku) : labels `size:*`/`model:*` + commentaire d'analyse ou questions
@@ -94,6 +95,7 @@ async def poll(repos: list[dict]) -> None:
         await dev_followup.traiter_merges(repo)
         await dev_followup.surveiller_ci(repo)
         await dev_followup.traiter_commandes(repo)
+        await dev_followup.remettre_orphelins_en_file(repo)
 
         # --- Triage(1/3) : analyse des nouveaux tickets, avant la chaîne de
         # priorité — léger (raisonnement pur, modèle haiku par défaut).

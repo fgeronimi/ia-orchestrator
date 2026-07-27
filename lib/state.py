@@ -106,6 +106,15 @@ def _connexion() -> sqlite3.Connection:
         ")"
     )
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS orphelins_signales ("  # crashs durs de l'exécutant détectés
+        "  repo TEXT NOT NULL,"
+        "  numero INTEGER NOT NULL,"
+        "  label_pose_le TEXT NOT NULL,"  # horodatage de la pose d'ai-working = identité de l'incident
+        "  signale_le TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  PRIMARY KEY (repo, numero, label_pose_le)"
+        ")"
+    )
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS forge_signale ("  # écarts de conformité déjà signalés
         "  repo TEXT NOT NULL,"
         "  condition TEXT NOT NULL,"
@@ -195,6 +204,33 @@ def conso_par_ticket(limite: int = 15) -> list[tuple]:
             (limite,),
         )
         return cur.fetchall()
+
+
+def orphelin_deja_signale(repo: str, numero: int, label_pose_le: str) -> bool:
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT 1 FROM orphelins_signales WHERE repo = ? AND numero = ? AND label_pose_le = ?",
+            (repo, numero, label_pose_le),
+        )
+        return cur.fetchone() is not None
+
+
+def marquer_orphelin(repo: str, numero: int, label_pose_le: str) -> None:
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO orphelins_signales (repo, numero, label_pose_le)"
+            " VALUES (?, ?, ?)",
+            (repo, numero, label_pose_le),
+        )
+
+
+def compter_orphelinages(repo: str, numero: int) -> int:
+    with _connexion() as conn:
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM orphelins_signales WHERE repo = ? AND numero = ?",
+            (repo, numero),
+        )
+        return int(cur.fetchone()[0])
 
 
 def conso_par_etape() -> list[tuple]:
