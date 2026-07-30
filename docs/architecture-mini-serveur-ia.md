@@ -28,6 +28,7 @@ aucune logique métier ; toute la logique vit dans `pipelines/*.py`.
 |---|---|
 | Hôte | Raspberry Pi 4, 4GB RAM |
 | OS | Raspberry Pi OS Lite 64-bit (Debian, kernel 6.18 aarch64) |
+| Disque | carte SD 15 Go (~14 Go utilisables hors réserve root) — surveillé, alerte à 80% |
 | User | `fgeronimi` |
 | Hostname LAN | `ia-orchestrator.home` (SSH local) |
 | Accès distant | Tailscale installé sur le Pi (`tailscale ip` pour l'adresse) |
@@ -101,6 +102,26 @@ objectives) et ouvre une issue `forge: <condition>` **sans label** par écart
 correction automatique des écarts (l'humain décide) et conditions floues
 nécessitant un agent LLM (v2 éventuelle).
 
+### Surveillance machine — ✅ v1 faite
+Le Pi tourne sur une carte SD de 15 Go que les workspaces de l'exécutant
+remplissent au fil des tickets : il faut le savoir avant la saturation. Timer
+`orchestrator-sante` (15 min) → `sante.py` → `pipelines/sante.py` mesure le
+disque (`shutil.disk_usage`, pourcentage calculé comme `df` : `utilise /
+(utilise + libre)`, la réserve root étant exclue), la RAM (`/proc/meminfo`,
+`MemAvailable` et non `MemFree`), la charge, la température et l'état des
+services/timers — **aucun appel Claude, aucun réseau** hors notification.
+
+Alerte Discord dès le seuil `SEUIL_DISQUE` (défaut 80%), puis à chaque palier
+franchi (90%, 95%). Anti-spam par palier mémorisé dans la table `meta` de
+SQLite : tant que le disque reste dans le même palier, silence ; en repassant
+sous le seuil, une notif de retour à la normale part et la mémoire est effacée.
+Sans ça, un disque à 81% alerterait toutes les 15 minutes indéfiniment.
+
+Les mêmes mesures alimentent `@bot santé` dans Discord (via `dev_statut`).
+Hors périmètre v1 : purge automatique des workspaces (l'humain décide), et
+surveillance d'autres axes que le disque en alerte (RAM/température sont
+affichées mais n'alertent pas — le Pi swappe sans mourir, et 66 °C est normal).
+
 ---
 
 ## 3. Structure réelle du repo
@@ -110,18 +131,20 @@ ia-orchestrator/
 ├── README.md
 ├── .gitignore                 # .env*, state/
 ├── .env / .env.example        # .env NON versionné (chmod 600)
-├── bot.py                     # routeur Discord (notifs + @bot conso/statut dans #orchestrateur)
+├── bot.py                     # routeur Discord (notifs + @bot conso/statut/santé dans #orchestrateur)
 ├── server.py                  # endpoint Flask /health (port 5000)
 ├── poll.py                    # ✅ poller multi-repos : notifs + followup + CI + 1 action lourde/tour
 ├── forge.py                   # ✅ 1 passage/jour : conformité déclarative des repos surveillés
+├── sante.py                   # ✅ 1 tour/15 min : surveillance machine (alerte disque par palier)
 ├── data/
 │   ├── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
 │   └── forge.yaml             # ✅ conditions de conformité (labels, fichiers, protection main)
 ├── pipelines/
 │   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR + auto-review + révision + fix CI
 │   ├── dev_followup.py        # ✅ suivi : nettoyage post-merge, CI (notif + détection rouge)
-│   ├── dev_statut.py          # ✅ @bot conso / statut depuis Discord (lecture seule)
-│   └── forge.py                # ✅ vérifie data/forge.yaml sur chaque repo, ticket par écart
+│   ├── dev_statut.py          # ✅ @bot conso / statut / santé depuis Discord (lecture seule)
+│   ├── forge.py               # ✅ vérifie data/forge.yaml sur chaque repo, ticket par écart
+│   └── sante.py               # ✅ mesures machine (disque, RAM, charge, temp) + alerte disque par palier
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
@@ -135,12 +158,14 @@ ia-orchestrator/
 │   ├── sync.sh                # auto-update git + restart (appelé par le timer sync)
 │   ├── poll.sh                # ✅ un tour du poller (appelé par le timer poll)
 │   ├── forge.sh                # ✅ un passage de la forge (appelé par le timer forge)
+│   ├── sante.sh               # ✅ un tour de surveillance machine (appelé par le timer santé)
 │   └── systemd/
 │       ├── orchestrator-bot.service      # bot.py
 │       ├── orchestrator-server.service   # server.py
 │       ├── orchestrator-sync.{service,timer}   # auto-update git, toutes les 10 min
 │       ├── orchestrator-poll.{service,timer}   # poller GitHub, toutes les 5 min
 │       ├── orchestrator-forge.{service,timer}  # forge (conformité), 1x/jour
+│       ├── orchestrator-sante.{service,timer}  # surveillance machine, toutes les 15 min
 │       └── orchestrator-fail-notify@.service   # OnFailure → notif Discord 🚨
 └── docs/
     ├── architecture-mini-serveur-ia.md   # ce fichier
@@ -178,6 +203,7 @@ ia-orchestrator/
 | `make env-pull` / `env-push` | récupère/envoie le `.env` (sauvegarde horodatée avant écrasement, restart après push) |
 | `make env-diff` | compare les **clés** des deux `.env` — jamais les valeurs |
 | `make remote-poll` / `remote-conso` | déclenche un tour de poll / affiche la conso Claude par ticket |
+| `make remote-sante` | santé du Pi (disque, RAM, charge, température, services) |
 
 **Prérequis SSH (une fois) :** les cibles distantes passent par
 `fgeronimi@ia-orchestrator.home`. Le user est explicite dans le Makefile
@@ -191,8 +217,8 @@ du Pi (`make deploy PI_HOST=<ip-tailscale>`).
 |---|---|
 | `make sync` | pull, rebase, push, restart si code changé |
 | `make pull` / `push` / `restart` / `status` / `logs` / `test` | opérations unitaires |
-| `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min + forge 1x/j) |
-| `make poll` / `conso` / `forge` | tour de poll / conso Claude par ticket / vérification de conformité, à la main |
+| `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min + forge 1x/j + santé 15 min) |
+| `make poll` / `conso` / `forge` / `sante` | tour de poll / conso Claude par ticket / vérification de conformité / surveillance machine, à la main |
 
 ### Poller GitHub (`orchestrator-poll.timer` → `poll.py`)
 Toutes les 5 min, `poll.py`, pour **chaque repo** de `data/repos.yaml`
@@ -203,6 +229,15 @@ confondus sous verrou (`state/executor.lock`) — révision d'une PR commentée
 (prioritaire) ou exécution de la première issue `ai-ready`. Un run peut donc
 durer plusieurs minutes (Claude implémente + auto-review). Détails et
 limites : `docs/plan-orchestrateur-dev.md` §4 et §7.
+
+**Isolation des hoquets réseau** — chaque appel GitHub du tour est protégé
+repo par repo, dans le tour léger (`_tour_leger`) **comme dans la chaîne de
+priorité** (`_premier`) : un `ReadTimeout` de l'API ne fait échouer ni le
+service ni les repos suivants, il saute le repo et le tour d'après rattrape.
+Le repo sauté est signalé par une notif ⚠️ (une info, pas une alerte). Les
+deux moitiés ont été corrigées séparément : le tour léger le 2026-07-27 (rafale
+de merges), la chaîne de priorité le 2026-07-30 après un `ReadTimeout` dans
+`chercher_revision` à 02:03 qui avait tué le service et déclenché un 🚨.
 ```bash
 journalctl -u orchestrator-poll -f                         # logs du poller
 .venv/bin/python poll.py fgeronimi/ia-orchestrator         # un tour à la main
@@ -224,6 +259,23 @@ reste un geste humain), dédupliquée par (repo, condition, version) dans
 journalctl -u orchestrator-forge -f                        # logs de la forge
 .venv/bin/python forge.py                                  # un passage à la main
 sqlite3 state/orchestrator.db "SELECT * FROM forge_signale;"  # état dédup
+```
+
+### Surveillance machine (`orchestrator-sante.timer` → `sante.py`)
+Toutes les 15 min, `sante.py` mesure le disque, la RAM, la charge, la
+température et l'état des services/timers — mesures purement locales (`/proc`,
+`/sys`, `df`, `systemctl`), aucun appel Claude ni GitHub. Alerte Discord 🔴 dès
+`SEUIL_DISQUE` (défaut 80%), puis aux paliers 90% et 95%, **une seule fois par
+palier** (dernier palier mémorisé dans la table `meta`) ; notif ✅ de retour à
+la normale en repassant sous le seuil, qui réarme l'alerte. Le pourcentage est
+calculé comme `df` (`utilise / (utilise + libre)`) et non `utilise / total` :
+la réserve root d'ext4 (~5%) n'est pas utilisable, la compter fausserait le
+seuil de ~3 points.
+```bash
+journalctl -u orchestrator-sante -f                        # logs de la surveillance
+make sante                                                 # un tour à la main
+SEUIL_DISQUE=60 .venv/bin/python sante.py                  # tester l'alerte (⚠️ notifie pour de vrai)
+sqlite3 state/orchestrator.db "SELECT * FROM meta WHERE cle='sante_disque_palier';"
 ```
 
 ### Auto-update git (`infra/sync.sh` + `orchestrator-sync.timer`)

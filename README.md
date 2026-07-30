@@ -68,21 +68,28 @@ L'état vit dans les **labels GitHub** de l'issue :
   `data/modeles.yaml`, ou override par ticket avec un label `model:<alias>`
   (`haiku`/`sonnet`/`opus`) ; le modèle utilisé est tracé avec la conso.
 - **Notifications Discord** à chaque étape (🎫 🔨 🔍 ✏️ 🔧 ✅ 🧹 ⚠️ ⏳ 🚨), et un
-  bot interrogeable : `@bot conso`, `@bot statut`.
+  bot interrogeable : `@bot conso`, `@bot statut`, `@bot santé`.
+- **Surveillance machine** : toutes les 15 min, alerte Discord dès que le disque
+  atteint `SEUIL_DISQUE` (défaut 80%), puis à chaque palier franchi (90%, 95%),
+  une seule fois par palier ; notif de retour à la normale en repassant dessous.
 - **Robustesse** : quota d'abonnement géré (remise en file + reprise), échecs
   durs visibles (`ai-failed`), crash du poller notifié (`OnFailure=`),
-  verrou anti-concurrence libéré même après un kill.
+  verrou anti-concurrence libéré même après un kill, hoquets réseau isolés repo
+  par repo (tour léger **et** chaîne de priorité) — un timeout GitHub ne fait
+  jamais échouer le tour.
 
 ## Architecture
 
 ```
 poll.py                    # un tour : notifs + followup + CI, puis 1 action lourde (verrou)
 forge.py                   # un passage : conformité déclarative des repos surveillés (verrou)
+sante.py                   # un tour de surveillance machine (disque : alerte par palier)
 pipelines/
 ├── dev_executor.py        # exécute, révise, répare la CI (les appels Claude)
 ├── dev_followup.py        # suivi léger : nettoyage post-merge, CI (notif + détection)
-├── dev_statut.py          # @bot conso / statut depuis Discord
-└── forge.py                # vérifie data/forge.yaml sur chaque repo, ticket par écart
+├── dev_statut.py          # @bot conso / statut / santé depuis Discord
+├── forge.py               # vérifie data/forge.yaml sur chaque repo, ticket par écart
+└── sante.py               # mesures machine (disque, RAM, charge, temp) + alerte disque
 lib/
 ├── claude.py              # wrapper claude -p (JSON : texte + tokens + coût, quota détecté)
 ├── github.py              # API GitHub (issues, PR, labels, rulesets, check runs, logs de jobs)
@@ -90,7 +97,7 @@ lib/
 ├── state.py               # idempotence SQLite (notifs, PR, commentaires, CI, conso, quota, forge)
 └── notify.py              # notifs : bot Discord si dispo, sinon webhook
 bot.py / server.py         # bot Discord (notifs + statut) / HTTP (/health, /conso)
-infra/                     # setup idempotent, systemd (timers poll + sync + forge, OnFailure), sync auto
+infra/                     # setup idempotent, systemd (timers poll + sync + forge + santé, OnFailure), sync auto
 data/repos.yaml            # repos surveillés
 data/forge.yaml            # conditions de conformité des repos surveillés
 ```
@@ -115,7 +122,7 @@ cp .env.example .env && chmod 600 .env      # puis remplir les secrets (voir Con
 sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now orchestrator-bot orchestrator-server
-make install-timer                          # timers : poller (5 min) + auto-update (10 min) + forge (1x/j)
+make install-timer                          # timers : poller (5 min) + auto-update (10 min) + forge (1x/j) + santé (15 min)
 ```
 
 Côté GitHub, une fois par repo surveillé :
@@ -133,9 +140,10 @@ Côté GitHub, une fois par repo surveillé :
 | `GITHUB_TOKEN` | PAT scopé aux repos surveillés (voir ci-dessus) |
 | `WATCHED_REPO` | repo surveillé — secours si `data/repos.yaml` absent |
 | `CLAUDE_CODE_OAUTH_TOKEN` | auth Claude Code (abonnement, via `claude setup-token`) |
-| `DISCORD_BOT_TOKEN` | bot Discord (notifs + `@bot conso/statut`) |
+| `DISCORD_BOT_TOKEN` | bot Discord (notifs + `@bot conso/statut/santé`) |
 | `DISCORD_WEBHOOK_URL` | notifs des process hors-bot (poller, timers) → `#orchestrateur` |
 | `NOTIFY_CHANNEL_ID` | canal de notif du bot |
+| `SEUIL_DISQUE` | *(optionnel)* seuil d'alerte disque en %, défaut 80, borné à [50, 99] |
 
 Repos surveillés (`data/repos.yaml`) :
 
@@ -173,17 +181,20 @@ make                 # liste toutes les cibles (Pi vs Mac)
 make deploy          # (Mac) push + mise à jour du Pi
 make remote-poll     # (Mac) déclenche un tour de poll (⚠️ peut exécuter un ticket)
 make remote-conso    # (Mac) conso Claude par ticket (tokens, coût)
+make remote-sante    # (Mac) santé du Pi (disque, RAM, charge, température)
 make remote-logs     # (Mac) logs du Pi en continu
-make conso / poll / forge  # (Pi) équivalents locaux (forge : vérification de conformité)
+make conso / poll / forge / sante  # (Pi) équivalents locaux
 ```
 
 Depuis Discord (`#orchestrateur`) : `@bot statut` (tickets en file / en cours /
-en échec, PR ouvertes), `@bot conso` (tableau par ticket). En HTTP :
-`GET /health`, `GET /conso` (port 5000, non exposé sur internet).
+en échec, PR ouvertes), `@bot conso` (tableau par ticket), `@bot santé`
+(disque, RAM, charge, température, uptime, état des services et timers).
+En HTTP : `GET /health`, `GET /conso` (port 5000, non exposé sur internet).
 
 Le Pi s'auto-entretient : un push sur `main` est récupéré et les services
 redémarrés dans les 10 minutes ; le poller notifie tout ce qu'il fait dans
-`#orchestrateur` ; un crash du poller envoie un 🚨.
+`#orchestrateur` ; un crash du poller envoie un 🚨 ; un disque qui se remplit
+alerte à 80% (puis 90%, 95%), une seule fois par palier.
 
 ## Exemple de bout en bout (vécu : issue #11 → PR #12)
 

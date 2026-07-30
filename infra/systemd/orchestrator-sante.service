@@ -1,0 +1,22 @@
+# Surveillance machine : alerte Discord quand le disque atteint SEUIL_DISQUE
+# (défaut 80%), puis à chaque palier franchi (90%, 95%).
+# Déclenché par orchestrator-sante.timer (oneshot).
+# Installation :  make install-timer
+# Logs :          journalctl -u orchestrator-sante -f
+
+[Unit]
+Description=Orchestrateur IA - surveillance machine (disque, RAM, charge)
+# Pas de After=network-online.target : les mesures sont locales. Seule la
+# notification a besoin du réseau, et notify() loggue proprement s'il manque.
+OnFailure=orchestrator-fail-notify@%n.service
+
+[Service]
+Type=oneshot
+User=fgeronimi
+WorkingDirectory=/home/fgeronimi/ia-orchestrator
+EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+# Pas de node ici (aucun appel `claude`) : PATH système suffit.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash /home/fgeronimi/ia-orchestrator/infra/sante.sh
+
+PrivateTmp=true
