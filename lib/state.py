@@ -309,6 +309,27 @@ def quota_bloque_jusqua() -> int | None:
     return jusqua if jusqua > time.time() else None
 
 
+def meta_lire(cle: str) -> str | None:
+    """Valeur brute d'une clé de la table meta (clé/valeur), None si absente."""
+    with _connexion() as conn:
+        cur = conn.execute("SELECT valeur FROM meta WHERE cle = ?", (cle,))
+        ligne = cur.fetchone()
+    return ligne[0] if ligne is not None else None
+
+
+def meta_ecrire(cle: str, valeur: str) -> None:
+    with _connexion() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (cle, valeur) VALUES (?, ?)",
+            (cle, valeur),
+        )
+
+
+def meta_effacer(cle: str) -> None:
+    with _connexion() as conn:
+        conn.execute("DELETE FROM meta WHERE cle = ?", (cle,))
+
+
 def pr_deja_suivie(repo: str, numero: int) -> bool:
     with _connexion() as conn:
         cur = conn.execute(

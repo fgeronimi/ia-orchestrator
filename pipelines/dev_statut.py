@@ -3,16 +3,24 @@
 Commandes (lecture seule, aucun appel Claude) :
   @bot conso   → conso Claude agrégée par ticket (tokens, coût estimé)
   @bot statut  → tickets en file / en cours / en échec + PR d'agent ouvertes
+  @bot santé   → état de santé du Pi (disque, RAM, charge, température…)
   autre chose  → aide
 
 Le repo interrogé est le premier de data/repos.yaml (via poll.charger_repos),
 comme le poller.
+
+⚠️ Ce module tourne DANS la boucle asyncio du bot : tout appel bloquant
+(réseau, subprocess) doit passer par `asyncio.to_thread`, sinon le heartbeat
+Discord saute — vécu le 2026-07-27, `heartbeat blocked for more than 10s`.
 """
 
-from lib import github, state
+import asyncio
 
-AIDE = ("Commandes : `conso` (tokens/coût par ticket) ou `statut` "
-        "(tickets et PR en cours).")
+from lib import github, state
+from pipelines import sante
+
+AIDE = ("Commandes : `conso` (tokens/coût par ticket), `statut` "
+        "(tickets et PR en cours) ou `santé` (état du Pi).")
 
 
 def _conso() -> str:
@@ -56,9 +64,15 @@ async def handle(text: str, message) -> str:
     demande = text.strip().lower()
     if "conso" in demande:
         return _conso()
+    if "sante" in demande or "santé" in demande or "health" in demande:
+        # Lit /proc, df et systemctl : bloquant, donc hors boucle asyncio.
+        return await asyncio.to_thread(sante.resume)
     if "statut" in demande or "status" in demande or "état" in demande:
         repos = [e["repo"] for e in charger_repos()]
         if not repos:
             return "Aucun repo surveillé (data/repos.yaml vide et WATCHED_REPO absent)."
-        return "\n\n".join(f"__{repo}__\n{_statut(repo)}" for repo in repos)
+        # _statut() fait des appels GitHub synchrones : hors boucle asyncio.
+        blocs = [await asyncio.to_thread(_statut, repo) for repo in repos]
+        return "\n\n".join(f"__{repo}__\n{bloc}"
+                           for repo, bloc in zip(repos, blocs))
     return AIDE

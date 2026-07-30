@@ -1,0 +1,17 @@
+# Déclenche orchestrator-sante.service toutes les 15 minutes.
+# Assez fin pour voir un disque se remplir, assez espacé pour ne rien coûter.
+# Installation :  make install-timer
+# État :          systemctl list-timers orchestrator-sante
+
+[Unit]
+Description=Orchestrateur IA - surveillance machine toutes les 15 min
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+# Évite que tous les timers du Pi partent à la même seconde
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -34,6 +34,7 @@ Usage :
 
 import asyncio
 import fcntl
+import inspect
 import os
 import sys
 import time
@@ -110,6 +111,33 @@ async def _tour_leger(repo: str) -> list[dict]:
     return issues
 
 
+async def _premier(repos: list[dict], chercheur, libelle: str,
+                   sautes: list[str]) -> tuple[dict, object] | None:
+    """Premier résultat non nul de `chercheur` sur les repos → (entrée, trouvé).
+
+    Même frontière d'isolation que `_tour_leger`, pour la chaîne de priorité :
+    un hoquet réseau sur un repo ne doit ni faire échouer le service ni priver
+    les repos suivants de leur tour — vécu le 2026-07-30 à 02:03, où un
+    ReadTimeout de l'API GitHub dans `chercher_revision` a tué le tour entier.
+    On saute le repo, le tour suivant (5 min) rattrape.
+
+    `chercheur` peut être synchrone ou asynchrone (les deux existent).
+    """
+    for entree in repos:
+        try:
+            trouvee = chercheur(entree["repo"])
+            if inspect.isawaitable(trouvee):
+                trouvee = await trouvee
+        except Exception as exc:  # noqa: BLE001 — frontière d'isolation par repo
+            print(f"[poll] {entree['repo']} : {libelle} en échec ({exc}) — "
+                  f"repo sauté, le tour suivant rattrape")
+            sautes.append(f"{entree['repo']} / {libelle} ({type(exc).__name__})")
+            continue
+        if trouvee is not None:
+            return entree, trouvee
+    return None
+
+
 async def poll(repos: list[dict]) -> None:
     a_faire: list[tuple[dict, dict]] = []  # (entrée repo, issue) candidats
     sautes: list[str] = []
@@ -138,40 +166,36 @@ async def poll(repos: list[dict]) -> None:
               + time.strftime("%H:%M", time.localtime(reprise)))
         return
 
+    # --- Chaîne de priorité : chaque recherche tape l'API GitHub, donc chacune
+    # passe par _premier() qui isole les hoquets repo par repo.
+    sautes_selection: list[str] = []
+
     # Première PR d'agent avec de nouveaux commentaires, tous repos confondus.
-    revision = None
-    for entree in repos:
-        trouvee = dev_executor.chercher_revision(entree["repo"])
-        if trouvee is not None:
-            revision = (entree, *trouvee)
-            break
+    revision = await _premier(repos, dev_executor.chercher_revision,
+                              "recherche de révision", sautes_selection)
 
     # À défaut, première PR humaine dont la review est demandée (label ai-review).
     review = None
     if revision is None:
-        for entree in repos:
-            trouvee = dev_followup.chercher_review_demandee(entree["repo"])
-            if trouvee is not None:
-                review = (entree, trouvee)
-                break
+        review = await _premier(repos, dev_followup.chercher_review_demandee,
+                                "recherche de review demandée", sautes_selection)
 
     # À défaut, première PR d'agent en conflit avec sa base.
     conflit = None
     if revision is None and review is None:
-        for entree in repos:
-            trouvee = dev_followup.chercher_conflit(entree["repo"])
-            if trouvee is not None:
-                conflit = (entree, trouvee)
-                break
+        conflit = await _premier(repos, dev_followup.chercher_conflit,
+                                 "recherche de conflit", sautes_selection)
 
     # À défaut, première PR d'agent dont la CI est rouge et réparable.
     ci_rouge = None
     if revision is None and review is None and conflit is None:
-        for entree in repos:
-            trouvee = await dev_followup.chercher_ci_rouge(entree["repo"])
-            if trouvee is not None:
-                ci_rouge = (entree, *trouvee)
-                break
+        ci_rouge = await _premier(repos, dev_followup.chercher_ci_rouge,
+                                  "recherche de CI rouge", sautes_selection)
+
+    if sautes_selection:
+        # Comme pour le tour léger : une info, pas une alerte.
+        await notify.notify("⚠️ poll : sélection sautée sur "
+                            + ", ".join(sautes_selection))
 
     if (not a_faire and revision is None and review is None
             and conflit is None and ci_rouge is None):
@@ -190,7 +214,7 @@ async def poll(repos: list[dict]) -> None:
         # Priorité : révision (débloquer ta review) > CI rouge (réparer
         # l'existant) > nouveau ticket. Le timeout vient de l'entrée repo.
         if revision is not None:
-            entree, pr, commentaires = revision
+            entree, (pr, commentaires) = revision
             print(f"[poll] révision de la PR {entree['repo']}#{pr['number']} "
                   f"({len(commentaires)} commentaire(s))")
             await dev_executor.reviser(entree["repo"], pr, commentaires,
@@ -205,7 +229,7 @@ async def poll(repos: list[dict]) -> None:
             await dev_executor.resoudre_conflit(entree["repo"], pr,
                                                 timeout=entree["timeout"])
         elif ci_rouge is not None:
-            entree, pr, echecs, log = ci_rouge
+            entree, (pr, echecs, log) = ci_rouge
             print(f"[poll] correction CI de la PR {entree['repo']}#{pr['number']}")
             await dev_executor.corriger_ci(entree["repo"], pr, echecs, log,
                                            timeout=entree["timeout"])
