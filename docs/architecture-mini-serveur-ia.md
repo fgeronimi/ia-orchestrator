@@ -127,17 +127,28 @@ affichées mais n'alertent pas — le Pi swappe sans mourir, et 66 °C est norma
 d'agent est mergée, mais la branche **locale** restait dans le workspace : au
 30/07, 28 branches `ai/*` mortes traînaient sur 5 workspaces. Timer
 `orchestrator-purge` (1x/jour, 03:30) → `purge.py` → `pipelines/purge.py`
-supprime les branches locales `ai/*` dont la PR est mergée, puis
-`reflog expire` + `git gc --prune=now` (sans ça, supprimer les refs ne rend
-aucun octet).
+supprime les branches locales `ai/*` devenues inutiles, puis `reflog expire` +
+`git gc --prune=now` (sans ça, supprimer les refs ne rend aucun octet).
+
+**Deux critères complémentaires**, l'un ne suffit pas :
+1. **PR mergée** (`merged_at` non nul) — indispensable pour les merges *squash*
+   ou *rebase*, où GitHub réécrit les commits : la branche n'est alors **pas**
+   un ancêtre de `main` alors que son travail y est.
+2. **Commits déjà dans la branche par défaut**
+   (`git merge-base --is-ancestor`, base refetchée avant comparaison) — attrape
+   ce que le critère 1 rate : orpheline sans PR mergée à la main, branche vide
+   abandonnée. Si le contenu est dans `main`, la ref ne protège plus rien.
 
 **Périmètre volontairement étroit**, parce que le risque est de supprimer de
-trop : seulement les branches préfixées `ai/` (jamais une branche humaine),
-seulement si la PR est **mergée** (une PR fermée sans merge ou une branche sans
-PR peut porter du travail non repris — cas réel : 3 branches orphelines
-épargnées au premier passage), et **jamais pendant qu'un agent code** (le tour
-prend `state/executor.lock`, celui de l'action lourde de `poll.py`, et non un
-verrou propre).
+trop : seulement les branches préfixées `ai/` (jamais une branche humaine, même
+si elle est ancêtre de `main`), une `ai/*` sans PR mergée **et** absente de la
+base est conservée (elle peut porter du travail non repris — 3 orphelines
+épargnées au passage du 2026-07-30, avant l'ajout du critère 2), et **jamais
+pendant qu'un agent code** (le tour prend `state/executor.lock`, celui de
+l'action lourde de `poll.py`, et non un verrou propre).
+
+La sortie de git est expurgée du token (`workspace._scrub`) avant d'atteindre
+les logs : un `fetch` en échec peut recracher l'URL authentifiée.
 
 Hors périmètre : les artefacts de build (`node_modules`, `.turbo`, `dist`…).
 Ils sont gitignorés donc invisibles pour git, et pèsent bien plus lourd que
@@ -159,7 +170,7 @@ ia-orchestrator/
 ├── poll.py                    # ✅ poller multi-repos : notifs + followup + CI + 1 action lourde/tour
 ├── forge.py                   # ✅ 1 passage/jour : conformité déclarative des repos surveillés
 ├── sante.py                   # ✅ 1 tour/15 min : surveillance machine (alerte disque par palier)
-├── purge.py                   # ✅ 1 passage/jour : purge des branches locales des PR mergées
+├── purge.py                   # ✅ 1 passage/jour : purge des branches locales ai/* devenues inutiles
 ├── data/
 │   ├── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
 │   └── forge.yaml             # ✅ conditions de conformité (labels, fichiers, protection main)
@@ -169,7 +180,7 @@ ia-orchestrator/
 │   ├── dev_statut.py          # ✅ @bot conso / statut / santé depuis Discord (lecture seule)
 │   ├── forge.py               # ✅ vérifie data/forge.yaml sur chaque repo, ticket par écart
 │   ├── sante.py               # ✅ mesures machine (disque, RAM, charge, temp) + alerte disque par palier
-│   └── purge.py               # ✅ supprime les branches locales ai/* des PR mergées + git gc
+│   └── purge.py               # ✅ supprime les branches locales ai/* mergées ou déjà dans main + git gc
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
@@ -231,7 +242,7 @@ ia-orchestrator/
 | `make env-diff` | compare les **clés** des deux `.env` — jamais les valeurs |
 | `make remote-poll` / `remote-conso` | déclenche un tour de poll / affiche la conso Claude par ticket |
 | `make remote-sante` | santé du Pi (disque, RAM, charge, température, services) |
-| `make remote-purge` | purge les workspaces du Pi (branches locales des PR mergées) |
+| `make remote-purge` | purge les workspaces du Pi (branches `ai/*` devenues inutiles) |
 
 **Prérequis SSH (une fois) :** les cibles distantes passent par
 `fgeronimi@ia-orchestrator.home`. Le user est explicite dans le Makefile
@@ -311,11 +322,13 @@ Une fois par jour (03:30, décalé de la forge), sous **`state/executor.lock`**
 — celui de l'action lourde, pas un verrou propre : la purge touche aux branches
 des workspaces où l'exécutant code, les deux ne doivent jamais se croiser. Si
 l'exécutant travaille, on repasse le lendemain. Pour chaque repo de
-`data/repos.yaml` : intersection des branches locales `ai/*` et des branches de
-PR **mergées** (`list_pulls(state="closed")`, `merged_at` non nul, `head_repo`
-égal au repo pour écarter les forks), suppression par `git branch -D` (la
-branche est mergée en amont, pas forcément localement), puis `reflog expire` +
-`git gc --prune=now`. Si la branche courante est à purger, HEAD est détaché
+`data/repos.yaml` : branches locales `ai/*` qui sont soit dans les PR **mergées**
+(`list_pulls(state="closed")`, `merged_at` non nul, `head_repo` égal au repo pour
+écarter les forks), soit **contenues dans la branche par défaut** (refetchée,
+puis `git merge-base --is-ancestor <branche> FETCH_HEAD`) ; suppression par
+`git branch -D` (mergée en amont, pas forcément localement), puis
+`reflog expire` + `git gc --prune=now`. Si le fetch échoue, le critère 2 est
+neutralisé — pas de verdict, pas de suppression. Si la branche courante est à purger, HEAD est détaché
 d'abord (`preparer()` refait un `checkout -B <base>` au prochain usage).
 Notification 🧹 seulement si quelque chose a été purgé.
 ```bash

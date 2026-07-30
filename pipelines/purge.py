@@ -6,15 +6,28 @@ d'agent est mergée, mais la branche **locale** reste dans le workspace
 s'empilent et retiennent des objets git que `gc` ne peut pas libérer tant
 qu'une ref les atteint.
 
-Ce pipeline supprime, pour chaque repo surveillé, les branches locales
-`ai/*` dont la PR est **mergée** — puis lance un `git gc --prune=now` qui
+Ce pipeline supprime, pour chaque repo surveillé, les branches locales `ai/*`
+qui n'ont plus de raison d'exister, puis lance un `git gc --prune=now` qui
 transforme ces suppressions en octets réellement rendus.
+
+Deux critères, **complémentaires** :
+
+1. **La PR est mergée** (`merged_at` non nul). Indispensable pour les merges
+   *squash* ou *rebase* : GitHub réécrit les commits, donc la branche n'est
+   **pas** un ancêtre de `main` alors que son travail y est bel et bien.
+2. **Tous ses commits sont déjà dans la branche par défaut**
+   (`git merge-base --is-ancestor <branche> <base>`). Attrape ce que le
+   critère 1 laisse passer : branche orpheline sans PR mais mergée à la main,
+   branche vide créée puis abandonnée. Si le contenu est dans `main`, la ref ne
+   protège plus rien — la supprimer ne perd aucun commit, ils restent
+   joignables depuis `main`.
 
 Périmètre volontairement étroit, par prudence :
 - **seulement** les branches préfixées `ai/` (celles de l'agent) — jamais une
   branche humaine, même à l'abandon ;
-- **seulement** si la PR correspondante est mergée. Une PR fermée sans merge
-  ou une branche sans PR peut porter du travail non repris : on n'y touche pas ;
+- une branche `ai/*` **sans PR mergée et absente de `main`** est conservée :
+  elle peut porter du travail non repris (cas vécu : 3 orphelines épargnées le
+  2026-07-30, l'agent ayant crashé avant d'ouvrir la PR) ;
 - **jamais pendant qu'un agent code** : le tour prend `state/executor.lock`
   (voir `purge.py` à la racine). Sans ça, on supprimerait la branche sous les
   pieds de l'exécutant.
@@ -32,7 +45,7 @@ from pathlib import Path
 
 import yaml
 
-from lib import notify
+from lib import notify, workspace
 from pipelines.sante import octets
 
 RACINE = Path(__file__).parent.parent
@@ -52,14 +65,19 @@ def _charger_repos() -> list[str]:
 
 
 def _git(path: Path, *args: str) -> tuple[int, str]:
-    """git dans le workspace → (code retour, sortie). Ne lève jamais.
+    """git dans le workspace → (code retour, sortie **expurgée**). Ne lève jamais.
 
     La purge est du confort : elle ne doit jamais faire échouer son tour ni
     masquer une vraie alerte. On remonte le code et l'appelant décide.
+
+    La sortie passe par `workspace._scrub` : un `fetch` en échec recrache l'URL
+    authentifiée dans son message d'erreur (« could not read Username for
+    https://x-access-token:<token>@github.com/… »), et cette sortie part dans
+    les logs systemd. Le token ne doit jamais y apparaître.
     """
     r = subprocess.run(["git", "-C", str(path), *args],
                        capture_output=True, text=True, timeout=300)
-    return r.returncode, (r.stdout + r.stderr).strip()
+    return r.returncode, workspace._scrub((r.stdout + r.stderr).strip())
 
 
 def _taille(path: Path) -> int:
@@ -96,19 +114,64 @@ def branches_mergees(repo: str, github) -> set[str]:
     }
 
 
+def branches_dans_base(path: Path, repo: str, github) -> set[str]:
+    """Branches `ai/*` locales dont tous les commits sont déjà dans la base.
+
+    La base (branche par défaut du repo) est **refetchée** avant comparaison :
+    se fier au `main` local suffirait à rater tout ce qui a été mergé depuis le
+    dernier passage de l'exécutant. En cas d'échec du fetch, on renvoie un
+    ensemble vide — pas de verdict, donc aucune suppression.
+
+    `workspace._url` est réutilisé volontairement : c'est le seul endroit du
+    projet qui construit l'URL authentifiée, et dupliquer la manipulation du
+    token ici serait pire que d'emprunter un helper privé du même paquet.
+    """
+    base = github.get_default_branch(repo)
+    code, sortie = _git(path, "fetch", workspace._url(repo), base)
+    if code != 0:
+        print(f"[purge] {repo} : fetch de {base} en échec ({sortie[:120]}) — "
+              f"critère « déjà dans {base} » non évalué")
+        return set()
+
+    contenues = set()
+    for branche in branches_locales(path):
+        # --is-ancestor : code 0 si tous les commits de la branche sont
+        # joignables depuis FETCH_HEAD. Une branche vide l'est trivialement.
+        code, _ = _git(path, "merge-base", "--is-ancestor", branche, "FETCH_HEAD")
+        if code == 0:
+            contenues.add(branche)
+    return contenues
+
+
 def purger_repo(repo: str, github) -> dict:
-    """Purge le workspace d'un repo. → {branches: [...], recupere: octets}."""
+    """Purge le workspace d'un repo.
+
+    → {branches: [...], raisons: {branche: raison}, recupere: octets}
+    """
+    vide = {"branches": [], "raisons": {}, "recupere": 0}
     path = WORKSPACES / repo.replace("/", "-")
     if not (path / ".git").exists():
-        return {"branches": [], "recupere": 0}
+        return vide
 
-    locales = branches_locales(path)
+    locales = set(branches_locales(path))
     if not locales:
-        return {"branches": [], "recupere": 0}
+        return vide
 
-    a_purger = sorted(set(locales) & branches_mergees(repo, github))
+    mergees = locales & branches_mergees(repo, github)
+    # Évalué même si `mergees` couvre déjà tout : c'est ce critère qui attrape
+    # les orphelines sans PR, et il ne coûte qu'un fetch de la base.
+    dans_base = locales & branches_dans_base(path, repo, github)
+
+    raisons = {b: "PR mergée" for b in mergees}
+    base = None
+    for b in dans_base - mergees:
+        if base is None:
+            base = github.get_default_branch(repo)
+        raisons[b] = f"déjà dans {base}"
+
+    a_purger = sorted(raisons)
     if not a_purger:
-        return {"branches": [], "recupere": 0}
+        return vide
 
     avant = _taille(path)
 
@@ -130,6 +193,7 @@ def purger_repo(repo: str, github) -> dict:
         code, sortie = _git(path, "branch", "-D", branche)
         if code == 0:
             purgees.append(branche)
+            print(f"[purge] {repo} : {branche} supprimée ({raisons[branche]})")
         else:
             print(f"[purge] {repo} : {branche} non supprimée ({sortie[:120]})")
 
@@ -139,7 +203,9 @@ def purger_repo(repo: str, github) -> dict:
         _git(path, "reflog", "expire", "--expire=now", "--all")
         _git(path, "gc", "--prune=now", "--quiet")
 
-    return {"branches": purgees, "recupere": max(0, avant - _taille(path))}
+    return {"branches": purgees,
+            "raisons": {b: raisons[b] for b in purgees},
+            "recupere": max(0, avant - _taille(path))}
 
 
 async def purger(repos: list[str] | None = None, github=None) -> str:
@@ -160,18 +226,22 @@ async def purger(repos: list[str] | None = None, github=None) -> str:
         if r["branches"]:
             total_branches += len(r["branches"])
             total_octets += r["recupere"]
-            details.append(f"{repo} : {len(r['branches'])} branche(s) "
-                           f"({', '.join(r['branches'])})")
+            raisons = r.get("raisons", {})
+            # La raison figure dans la notif : « déjà dans main » sur une
+            # branche sans PR est le cas qu'on veut pouvoir relire après coup.
+            details.append(f"{repo} : " + ", ".join(
+                f"{b} ({raisons[b]})" if b in raisons else b
+                for b in r["branches"]))
             print(f"[purge] {repo} : {len(r['branches'])} branche(s) purgée(s), "
                   f"{octets(r['recupere'])} rendus")
 
     if not total_branches:
-        return "rien à purger (aucune branche locale de PR mergée)"
+        return "rien à purger (aucune branche mergée ni contenue dans la base)"
 
     reste = shutil.disk_usage("/")
     await notify.notify(
-        f"🧹 Purge des workspaces : {total_branches} branche(s) de PR mergées "
-        f"supprimée(s), {octets(total_octets)} rendus.\n"
+        f"🧹 Purge des workspaces : {total_branches} branche(s) supprimée(s), "
+        f"{octets(total_octets)} rendus.\n"
         + "\n".join(details)
         + f"\nDisque : {octets(reste.free)} libres."
     )
