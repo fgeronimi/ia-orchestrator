@@ -72,6 +72,9 @@ L'état vit dans les **labels GitHub** de l'issue :
 - **Surveillance machine** : toutes les 15 min, alerte Discord dès que le disque
   atteint `SEUIL_DISQUE` (défaut 80%), puis à chaque palier franchi (90%, 95%),
   une seule fois par palier ; notif de retour à la normale en repassant dessous.
+- **Purge des workspaces** : 1x/jour, supprime les branches locales `ai/*` dont
+  la PR est **mergée**, puis `git gc`. Ne touche jamais une branche humaine ni
+  une branche sans PR mergée (travail potentiellement non repris).
 - **Robustesse** : quota d'abonnement géré (remise en file + reprise), échecs
   durs visibles (`ai-failed`), crash du poller notifié (`OnFailure=`),
   verrou anti-concurrence libéré même après un kill, hoquets réseau isolés repo
@@ -84,12 +87,14 @@ L'état vit dans les **labels GitHub** de l'issue :
 poll.py                    # un tour : notifs + followup + CI, puis 1 action lourde (verrou)
 forge.py                   # un passage : conformité déclarative des repos surveillés (verrou)
 sante.py                   # un tour de surveillance machine (disque : alerte par palier)
+purge.py                   # un passage : purge des branches locales des PR mergées (verrou)
 pipelines/
 ├── dev_executor.py        # exécute, révise, répare la CI (les appels Claude)
 ├── dev_followup.py        # suivi léger : nettoyage post-merge, CI (notif + détection)
 ├── dev_statut.py          # @bot conso / statut / santé depuis Discord
 ├── forge.py               # vérifie data/forge.yaml sur chaque repo, ticket par écart
-└── sante.py               # mesures machine (disque, RAM, charge, temp) + alerte disque
+├── sante.py               # mesures machine (disque, RAM, charge, temp) + alerte disque
+└── purge.py               # supprime les branches locales ai/* des PR mergées + git gc
 lib/
 ├── claude.py              # wrapper claude -p (JSON : texte + tokens + coût, quota détecté)
 ├── github.py              # API GitHub (issues, PR, labels, rulesets, check runs, logs de jobs)
@@ -97,7 +102,7 @@ lib/
 ├── state.py               # idempotence SQLite (notifs, PR, commentaires, CI, conso, quota, forge)
 └── notify.py              # notifs : bot Discord si dispo, sinon webhook
 bot.py / server.py         # bot Discord (notifs + statut) / HTTP (/health, /conso)
-infra/                     # setup idempotent, systemd (timers poll + sync + forge + santé, OnFailure), sync auto
+infra/                     # setup idempotent, systemd (timers poll + sync + forge + santé + purge, OnFailure), sync auto
 data/repos.yaml            # repos surveillés
 data/forge.yaml            # conditions de conformité des repos surveillés
 ```
@@ -122,7 +127,7 @@ cp .env.example .env && chmod 600 .env      # puis remplir les secrets (voir Con
 sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now orchestrator-bot orchestrator-server
-make install-timer                          # timers : poller (5 min) + auto-update (10 min) + forge (1x/j) + santé (15 min)
+make install-timer                          # timers : poller (5 min) + auto-update (10 min) + forge (1x/j) + santé (15 min) + purge (1x/j)
 ```
 
 Côté GitHub, une fois par repo surveillé :
@@ -182,8 +187,9 @@ make deploy          # (Mac) push + mise à jour du Pi
 make remote-poll     # (Mac) déclenche un tour de poll (⚠️ peut exécuter un ticket)
 make remote-conso    # (Mac) conso Claude par ticket (tokens, coût)
 make remote-sante    # (Mac) santé du Pi (disque, RAM, charge, température)
+make remote-purge    # (Mac) purge les workspaces du Pi (branches des PR mergées)
 make remote-logs     # (Mac) logs du Pi en continu
-make conso / poll / forge / sante  # (Pi) équivalents locaux
+make conso / poll / forge / sante / purge  # (Pi) équivalents locaux
 ```
 
 Depuis Discord (`#orchestrateur`) : `@bot statut` (tickets en file / en cours /
@@ -194,7 +200,8 @@ En HTTP : `GET /health`, `GET /conso` (port 5000, non exposé sur internet).
 Le Pi s'auto-entretient : un push sur `main` est récupéré et les services
 redémarrés dans les 10 minutes ; le poller notifie tout ce qu'il fait dans
 `#orchestrateur` ; un crash du poller envoie un 🚨 ; un disque qui se remplit
-alerte à 80% (puis 90%, 95%), une seule fois par palier.
+alerte à 80% (puis 90%, 95%), une seule fois par palier ; les branches locales
+des PR mergées sont purgées chaque nuit.
 
 ## Exemple de bout en bout (vécu : issue #11 → PR #12)
 

@@ -18,9 +18,9 @@ SERVICES := orchestrator-bot orchestrator-server
 HORODATAGE := $(shell date +%Y%m%d-%H%M%S)
 
 .DEFAULT_GOAL := help
-.PHONY: help sync pull push restart status logs test poll forge sante conso \
-        install-timer deploy remote-logs remote-status remote-poll remote-conso \
-        remote-sante env-pull env-push env-diff
+.PHONY: help sync pull push restart status logs test poll forge sante purge \
+        conso install-timer deploy remote-logs remote-status remote-poll \
+        remote-conso remote-sante remote-purge env-pull env-push env-diff
 
 help: ## Affiche cette aide
 	@echo "Sur le Pi :"
@@ -55,9 +55,10 @@ logs: ## Suit les logs des deux services (Ctrl-C pour sortir)
 	@journalctl -u orchestrator-bot -u orchestrator-server -f
 
 test: ## Vérifie que les modules importent + lance les tests unitaires
-	@$(PYTHON) -c "import bot, server, poll, forge, sante, pipelines.dev_executor, \
+	@$(PYTHON) -c "import bot, server, poll, forge, sante, purge, pipelines.dev_executor, \
 		pipelines.dev_followup, pipelines.dev_statut, pipelines.dev_triage, pipelines.forge, \
-		pipelines.sante, lib.claude, lib.github, lib.notify, lib.state, lib.workspace" \
+		pipelines.sante, pipelines.purge, lib.claude, lib.github, lib.notify, \
+		lib.state, lib.workspace" \
 		&& echo "imports OK"
 	@$(PYTHON) -m unittest discover -s tests -v
 
@@ -69,6 +70,9 @@ forge: ## Vérifie les conditions déclaratives des repos surveillés (data/forg
 
 sante: ## Un tour de surveillance machine (alerte Discord si disque >= SEUIL_DISQUE)
 	@$(PYTHON) sante.py
+
+purge: ## Purge les workspaces : branches locales ai/* des PR mergées + git gc
+	@$(PYTHON) purge.py
 
 conso: ## Conso Claude par ticket (tokens lus/générés, coût estimé)
 	@test -f state/orchestrator.db || { echo "Pas encore de données."; exit 0; }
@@ -87,11 +91,11 @@ conso: ## Conso Claude par ticket (tokens lus/générés, coût estimé)
 		 printf('%.2f $$', SUM(cout_usd)) AS cout \
 		 FROM conso_claude GROUP BY etape ORDER BY SUM(cout_usd) DESC"
 
-install-timer: ## Installe les timers systemd (sync git + poll GitHub + forge quotidienne + santé)
+install-timer: ## Installe les timers systemd (sync + poll + forge + santé + purge)
 	@sudo cp infra/systemd/*.service infra/systemd/*.timer /etc/systemd/system/
 	@sudo systemctl daemon-reload
 	@sudo systemctl enable --now orchestrator-sync.timer orchestrator-poll.timer \
-		orchestrator-forge.timer orchestrator-sante.timer
+		orchestrator-forge.timer orchestrator-sante.timer orchestrator-purge.timer
 	@systemctl list-timers 'orchestrator-*' --no-pager
 
 # ------------------------------------------------------------ depuis le Mac
@@ -115,6 +119,9 @@ remote-conso: ## Conso Claude par ticket, lue sur le Pi depuis le Mac
 remote-sante: ## État de santé du Pi (disque, RAM, charge) depuis le Mac
 	@ssh $(PI) 'cd $(PI_DIR) && .venv/bin/python -c \
 		"from pipelines import sante; print(sante.resume())"'
+
+remote-purge: ## Purge les workspaces du Pi depuis le Mac (branches des PR mergées)
+	@ssh $(PI) 'cd $(PI_DIR) && make purge'
 
 env-diff: ## Compare les CLÉS du .env local et du Pi (jamais les valeurs)
 	@ssh $(PI) 'grep -oE "^[A-Z_]+=" $(PI_DIR)/.env | sort' > /tmp/env-pi.keys
