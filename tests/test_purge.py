@@ -2,11 +2,14 @@
 
 Le risque de ce pipeline est la suppression de trop : une branche humaine, ou
 une branche dont le travail n'est pas repris. Ces tests verrouillent le
-périmètre.
+périmètre, sur de **vrais dépôts git** (c'est git qu'il faut vérifier, pas un
+mock de git) et **sans réseau** : le « remote » est un dépôt bare local, injecté
+en remplaçant `workspace._url`.
 
 Lancer : python3 -m unittest tests.test_purge -v
 """
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -19,13 +22,17 @@ from pipelines import purge
 class FauxGithub:
     """PR d'un repo, forme allégée de github.list_pulls."""
 
-    def __init__(self, pulls):
-        self._pulls = pulls
+    def __init__(self, pulls=(), defaut="main"):
+        self._pulls = list(pulls)
+        self._defaut = defaut
         self.appels = []
 
     def list_pulls(self, repo, state="open"):
         self.appels.append((repo, state))
         return self._pulls
+
+    def get_default_branch(self, repo):
+        return self._defaut
 
 
 def _pr(numero, head, repo="acme/toto", merged=True):
@@ -44,91 +51,194 @@ class BranchesMergeesTest(unittest.TestCase):
         self.assertEqual(purge.branches_mergees("acme/toto", gh), {"ai/1"})
 
     def test_interroge_bien_les_pr_fermees(self):
-        gh = FauxGithub([])
+        gh = FauxGithub()
         purge.branches_mergees("acme/toto", gh)
         self.assertEqual(gh.appels, [("acme/toto", "closed")])
 
 
 class PurgerRepoTest(unittest.TestCase):
-    """Tests sur de vrais dépôts git locaux : c'est git qui doit être vérifié."""
+    """Dépôts git réels, remote bare local, aucun accès réseau.
+
+    Topologie montée par _depot() :
+
+        A ── B          main (remote et local), ai/1 est sur B
+             └── C      ai/2
+        l1-web reste sur A
+
+    Donc : ai/1 et l1-web sont des ancêtres de main, ai/2 non.
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        racine = Path(self._tmp.name)
-        self._workspaces = racine / "workspaces"
+        self._racine = Path(self._tmp.name)
+        self._workspaces = self._racine / "workspaces"
         self._workspaces.mkdir()
-        # purge.WORKSPACES est un constant de module : on le redirige.
-        self._patch = patch.object(purge, "WORKSPACES", self._workspaces)
-        self._patch.start()
-        self.addCleanup(self._patch.stop)
         self.addCleanup(self._tmp.cleanup)
+        p = patch.object(purge, "WORKSPACES", self._workspaces)
+        p.start()
+        self.addCleanup(p.stop)
 
-    def _depot(self, repo="acme/toto", branches=("ai/1", "ai/2", "l1-web")):
-        """Crée un dépôt git avec un commit et les branches demandées."""
+    @staticmethod
+    def _run(path, *args):
+        return subprocess.run(["git", "-C", str(path), *args],
+                              capture_output=True, text=True, check=True)
+
+    def _depot(self, repo="acme/toto"):
         path = self._workspaces / repo.replace("/", "-")
         path.mkdir(parents=True)
-        run = lambda *a: subprocess.run(["git", "-C", str(path), *a],
-                                        capture_output=True, check=True)
-        run("init", "-q", "-b", "main")
-        run("config", "user.email", "t@t.local")
-        run("config", "user.name", "test")
-        (path / "f.txt").write_text("bonjour")
-        run("add", "-A")
-        run("commit", "-q", "-m", "initial")
-        for b in branches:
-            run("branch", b)
+        self._run(path, "init", "-q", "-b", "main")
+        self._run(path, "config", "user.email", "t@t.local")
+        self._run(path, "config", "user.name", "test")
+
+        (path / "f.txt").write_text("A")
+        self._run(path, "add", "-A")
+        self._run(path, "commit", "-q", "-m", "A")
+        self._run(path, "branch", "l1-web")          # humaine, reste sur A
+
+        self._run(path, "checkout", "-q", "-b", "ai/1")
+        (path / "f.txt").write_text("B")
+        self._run(path, "commit", "-qam", "B")
+
+        self._run(path, "checkout", "-q", "main")
+        self._run(path, "merge", "-q", "--ff-only", "ai/1")  # main → B
+
+        self._run(path, "checkout", "-q", "-b", "ai/2")
+        (path / "f.txt").write_text("C")
+        self._run(path, "commit", "-qam", "C")
+        self._run(path, "checkout", "-q", "main")
+
+        # « remote » : bare local contenant main à B
+        bare = self._racine / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        self._run(path, "push", "-q", str(bare), "main")
+
+        faux_url = patch.object(purge.workspace, "_url",
+                                lambda r, _b=str(bare): _b)
+        faux_url.start()
+        self.addCleanup(faux_url.stop)
         return path
 
     def _branches(self, path):
-        r = subprocess.run(["git", "-C", str(path), "branch", "--format=%(refname:short)"],
-                           capture_output=True, text=True, check=True)
+        r = self._run(path, "branch", "--format=%(refname:short)")
         return sorted(l.strip() for l in r.stdout.splitlines() if l.strip())
 
-    def test_supprime_les_ai_mergees_et_garde_le_reste(self):
+    # --- critère 2 : déjà contenue dans la base ---------------------------
+
+    def test_orpheline_contenue_dans_main_est_purgee(self):
+        """Le cas demandé : aucune PR, mais le travail est déjà dans main."""
         path = self._depot()
-        gh = FauxGithub([_pr(1, "ai/1"), _pr(2, "ai/2", merged=False)])
+        gh = FauxGithub()  # aucune PR du tout
 
         r = purge.purger_repo("acme/toto", gh)
 
         self.assertEqual(r["branches"], ["ai/1"])
-        # ai/2 (PR non mergée) et l1-web (humaine) intactes
+        self.assertEqual(r["raisons"]["ai/1"], "déjà dans main")
+        # ai/2 porte un commit absent de main → conservée
         self.assertEqual(self._branches(path), ["ai/2", "l1-web", "main"])
 
-    def test_ne_touche_jamais_une_branche_humaine_meme_mergee(self):
-        """Une PR mergée sur une branche non-ai ne doit rien supprimer."""
-        path = self._depot(branches=("l1-web",))
-        gh = FauxGithub([_pr(9, "l1-web")])
-
-        r = purge.purger_repo("acme/toto", gh)
-
-        self.assertEqual(r["branches"], [])
+    def test_branche_humaine_contenue_dans_main_survit(self):
+        """l1-web est un ancêtre de main, mais n'est pas préfixée ai/."""
+        path = self._depot()
+        purge.purger_repo("acme/toto", FauxGithub())
         self.assertIn("l1-web", self._branches(path))
 
-    def test_branche_courante_mergee_est_supprimee_apres_detachement(self):
-        """Cas réel : le workspace est resté sur ai/27 après le merge."""
-        path = self._depot(branches=("ai/27",))
-        subprocess.run(["git", "-C", str(path), "checkout", "-q", "ai/27"], check=True)
-        gh = FauxGithub([_pr(27, "ai/27")])
+    def test_le_token_ne_fuit_jamais_dans_les_logs(self):
+        """Toute sortie de _git est expurgée du token avant d'atteindre les logs.
+
+        git redacte lui-même les identifiants dans *certains* messages, mais pas
+        tous : on ne s'en remet pas à lui. `git checkout <ref-inexistante>`
+        recrache son argument, ce qui force le cas de façon déterministe — si
+        le token vaut cette ref, il doit ressortir masqué.
+        """
+        path = self._depot()
+        faux_token = "ghp_TOKENSECRETQUINEDOITPASFUIR"
+        with patch.dict(os.environ, {"GITHUB_TOKEN": faux_token}):
+            code, sortie = purge._git(path, "checkout", faux_token)
+
+        self.assertNotEqual(code, 0, "le checkout devait échouer")
+        self.assertNotIn(faux_token, sortie)
+        self.assertIn("***", sortie)
+
+    def test_fetch_en_echec_ne_recrache_pas_le_token(self):
+        """Le vrai chemin : un fetch avec URL authentifiée qui échoue."""
+        path = self._depot()
+        faux_token = "ghp_AUTRETOKENSECRET"
+        url = f"https://x-access-token:{faux_token}@github.invalid/a/b.git"
+        with patch.dict(os.environ, {"GITHUB_TOKEN": faux_token}):
+            code, sortie = purge._git(path, "fetch", url, "main")
+
+        self.assertNotEqual(code, 0, "le fetch devait échouer")
+        self.assertNotIn(faux_token, sortie)
+
+    def test_fetch_en_echec_neutralise_ce_critere(self):
+        """Sans fetch, pas de verdict : on ne supprime rien de ce chef."""
+        path = self._depot()
+        with patch.object(purge.workspace, "_url",
+                          return_value="/chemin/inexistant.git"):
+            r = purge.purger_repo("acme/toto", FauxGithub())
+        self.assertEqual(r["branches"], [])
+        self.assertIn("ai/1", self._branches(path))
+
+    # --- critère 1 : PR mergée -------------------------------------------
+
+    def test_pr_mergee_hors_de_main_est_purgee(self):
+        """Cas du merge squash : les commits ne sont pas dans main, la PR si."""
+        path = self._depot()
+        gh = FauxGithub([_pr(2, "ai/2")])  # ai/2 n'est pas ancêtre de main
 
         r = purge.purger_repo("acme/toto", gh)
 
-        self.assertEqual(r["branches"], ["ai/27"])
-        self.assertNotIn("ai/27", self._branches(path))
-        # HEAD détaché : plus sur aucune branche
-        tete = subprocess.run(["git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD"],
-                              capture_output=True, text=True, check=True)
+        self.assertIn("ai/2", r["branches"])
+        self.assertEqual(r["raisons"]["ai/2"], "PR mergée")
+        self.assertNotIn("ai/2", self._branches(path))
+
+    def test_pr_non_mergee_hors_de_main_est_conservee(self):
+        path = self._depot()
+        gh = FauxGithub([_pr(2, "ai/2", merged=False)])
+        r = purge.purger_repo("acme/toto", gh)
+        self.assertNotIn("ai/2", r["branches"])
+        self.assertIn("ai/2", self._branches(path))
+
+    def test_pr_mergee_sur_branche_humaine_ne_supprime_rien(self):
+        path = self._depot()
+        gh = FauxGithub([_pr(9, "l1-web")])
+        r = purge.purger_repo("acme/toto", gh)
+        self.assertNotIn("l1-web", r["branches"])
+        self.assertIn("l1-web", self._branches(path))
+
+    # --- garde-fous ------------------------------------------------------
+
+    def test_branche_courante_est_supprimee_apres_detachement(self):
+        """Cas réel : le workspace est resté sur une branche à purger."""
+        path = self._depot()
+        self._run(path, "checkout", "-q", "ai/1")
+        gh = FauxGithub()
+
+        r = purge.purger_repo("acme/toto", gh)
+
+        self.assertEqual(r["branches"], ["ai/1"])
+        self.assertNotIn("ai/1", self._branches(path))
+        tete = self._run(path, "rev-parse", "--abbrev-ref", "HEAD")
         self.assertEqual(tete.stdout.strip(), "HEAD")
 
     def test_workspace_absent_ne_casse_rien(self):
-        gh = FauxGithub([_pr(1, "ai/1")])
-        r = purge.purger_repo("acme/jamais-clone", gh)
-        self.assertEqual(r, {"branches": [], "recupere": 0})
+        r = purge.purger_repo("acme/jamais-clone", FauxGithub([_pr(1, "ai/1")]))
+        self.assertEqual(r, {"branches": [], "raisons": {}, "recupere": 0})
 
     def test_aucune_branche_ai_aucun_appel_api(self):
         """Économie : sans branche ai/* locale, inutile d'interroger GitHub."""
-        self._depot(branches=("l1-web",))
-        gh = FauxGithub([])
+        path = self._workspaces / "acme-toto"
+        path.mkdir(parents=True)
+        self._run(path, "init", "-q", "-b", "main")
+        self._run(path, "config", "user.email", "t@t.local")
+        self._run(path, "config", "user.name", "test")
+        (path / "f.txt").write_text("A")
+        self._run(path, "add", "-A")
+        self._run(path, "commit", "-q", "-m", "A")
+
+        gh = FauxGithub()
         r = purge.purger_repo("acme/toto", gh)
+
         self.assertEqual(r["branches"], [])
         self.assertEqual(gh.appels, [])
 
@@ -136,22 +246,24 @@ class PurgerRepoTest(unittest.TestCase):
 class PurgerTest(unittest.IsolatedAsyncioTestCase):
     async def test_rien_a_purger_aucune_notif(self):
         with patch.object(purge, "purger_repo",
-                          return_value={"branches": [], "recupere": 0}), \
+                          return_value={"branches": [], "raisons": {},
+                                        "recupere": 0}), \
              patch("pipelines.purge.notify.notify", new_callable=AsyncMock) as mock:
             resultat = await purge.purger(["acme/toto"], github=object())
         mock.assert_not_awaited()
         self.assertIn("rien à purger", resultat)
 
-    async def test_resume_et_notif_quand_ca_purge(self):
+    async def test_la_notif_porte_la_raison(self):
         with patch.object(purge, "purger_repo",
                           return_value={"branches": ["ai/1", "ai/2"],
+                                        "raisons": {"ai/1": "PR mergée",
+                                                    "ai/2": "déjà dans main"},
                                         "recupere": 5 * 1024**2}), \
              patch("pipelines.purge.notify.notify", new_callable=AsyncMock) as mock:
             resultat = await purge.purger(["acme/toto"], github=object())
-        mock.assert_awaited_once()
         message = mock.await_args.args[0]
-        self.assertIn("2 branche(s)", message)
-        self.assertIn("ai/1", message)
+        self.assertIn("ai/1 (PR mergée)", message)
+        self.assertIn("ai/2 (déjà dans main)", message)
         self.assertIn("2 branche(s)", resultat)
 
     async def test_un_repo_qui_casse_ne_bloque_pas_les_suivants(self):
@@ -161,7 +273,8 @@ class PurgerTest(unittest.IsolatedAsyncioTestCase):
             vus.append(repo)
             if repo == "acme/casse":
                 raise RuntimeError("dépôt corrompu")
-            return {"branches": ["ai/1"], "recupere": 1024}
+            return {"branches": ["ai/1"], "raisons": {"ai/1": "PR mergée"},
+                    "recupere": 1024}
 
         with patch.object(purge, "purger_repo", side_effect=faux), \
              patch("pipelines.purge.notify.notify", new_callable=AsyncMock):

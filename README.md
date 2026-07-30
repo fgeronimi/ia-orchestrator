@@ -73,8 +73,9 @@ L'état vit dans les **labels GitHub** de l'issue :
   atteint `SEUIL_DISQUE` (défaut 80%), puis à chaque palier franchi (90%, 95%),
   une seule fois par palier ; notif de retour à la normale en repassant dessous.
 - **Purge des workspaces** : 1x/jour, supprime les branches locales `ai/*` dont
-  la PR est **mergée**, puis `git gc`. Ne touche jamais une branche humaine ni
-  une branche sans PR mergée (travail potentiellement non repris).
+  la PR est **mergée** *ou* dont les commits sont **déjà dans la branche par
+  défaut**, puis `git gc`. Ne touche jamais une branche humaine, ni une `ai/*`
+  qui porterait du travail absent de `main`.
 - **Robustesse** : quota d'abonnement géré (remise en file + reprise), échecs
   durs visibles (`ai-failed`), crash du poller notifié (`OnFailure=`),
   verrou anti-concurrence libéré même après un kill, hoquets réseau isolés repo
@@ -87,14 +88,14 @@ L'état vit dans les **labels GitHub** de l'issue :
 poll.py                    # un tour : notifs + followup + CI, puis 1 action lourde (verrou)
 forge.py                   # un passage : conformité déclarative des repos surveillés (verrou)
 sante.py                   # un tour de surveillance machine (disque : alerte par palier)
-purge.py                   # un passage : purge des branches locales des PR mergées (verrou)
+purge.py                   # un passage : purge des branches locales devenues inutiles (verrou)
 pipelines/
 ├── dev_executor.py        # exécute, révise, répare la CI (les appels Claude)
 ├── dev_followup.py        # suivi léger : nettoyage post-merge, CI (notif + détection)
 ├── dev_statut.py          # @bot conso / statut / santé depuis Discord
 ├── forge.py               # vérifie data/forge.yaml sur chaque repo, ticket par écart
 ├── sante.py               # mesures machine (disque, RAM, charge, temp) + alerte disque
-└── purge.py               # supprime les branches locales ai/* des PR mergées + git gc
+└── purge.py               # supprime les branches locales ai/* mergées ou déjà dans main + git gc
 lib/
 ├── claude.py              # wrapper claude -p (JSON : texte + tokens + coût, quota détecté)
 ├── github.py              # API GitHub (issues, PR, labels, rulesets, check runs, logs de jobs)
@@ -187,7 +188,7 @@ make deploy          # (Mac) push + mise à jour du Pi
 make remote-poll     # (Mac) déclenche un tour de poll (⚠️ peut exécuter un ticket)
 make remote-conso    # (Mac) conso Claude par ticket (tokens, coût)
 make remote-sante    # (Mac) santé du Pi (disque, RAM, charge, température)
-make remote-purge    # (Mac) purge les workspaces du Pi (branches des PR mergées)
+make remote-purge    # (Mac) purge les workspaces du Pi (branches ai/* devenues inutiles)
 make remote-logs     # (Mac) logs du Pi en continu
 make conso / poll / forge / sante / purge  # (Pi) équivalents locaux
 ```
@@ -201,7 +202,7 @@ Le Pi s'auto-entretient : un push sur `main` est récupéré et les services
 redémarrés dans les 10 minutes ; le poller notifie tout ce qu'il fait dans
 `#orchestrateur` ; un crash du poller envoie un 🚨 ; un disque qui se remplit
 alerte à 80% (puis 90%, 95%), une seule fois par palier ; les branches locales
-des PR mergées sont purgées chaque nuit.
+`ai/*` devenues inutiles sont purgées chaque nuit.
 
 ## Exemple de bout en bout (vécu : issue #11 → PR #12)
 

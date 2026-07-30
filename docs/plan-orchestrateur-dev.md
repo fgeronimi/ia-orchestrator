@@ -3,7 +3,7 @@
 > Plan d'attaque pour transformer l'orchestrateur en assistant de code : tu crées
 > des tickets GitHub, le Pi les implémente, ouvre des PR, se relit, et gère la
 > suite après ton merge. Document de travail, mis à jour au fil des phases.
-> Créé le 2026-07-25 · dernière mise à jour 2026-07-25.
+> Créé le 2026-07-25 · dernière mise à jour 2026-07-30.
 
 ## État d'avancement
 
@@ -14,20 +14,33 @@
 | **Phase 2** — suite après merge (nettoyage + boucle de révision) | ✅ **fait & validé live** |
 | **Phase 3** — élargissement (multi-repos, CI, review affinée) | ✅ **fait & validé live** |
 
-**Ce qui tourne aujourd'hui :** un timer systemd (`orchestrator-poll`) lance
-`poll.py` toutes les 5 min sur le Pi ; il lit les issues taggées `ai-ready` du
-repo surveillé, notifie les **nouvelles** dans `#orchestrateur` (dédup SQLite),
-puis nettoie les PR d'agent mergées (`dev_followup` : branche supprimée, label
-retiré), puis lance **une action lourde** sous verrou `flock`
-(`state/executor.lock`), révision prioritaire :
-- nouveaux commentaires humains sur une PR d'agent → `dev_executor.reviser()`
-  (Claude corrige sur la branche, repush, répond sur la PR) ;
-- sinon première issue `ai-ready` → `dev_executor.executer()` : label
-  `ai-working`, workspace, branche `ai/<n>`, Claude implémente, commit/push,
-  PR draft, auto-review en commentaire, notif à chaque étape.
+**Ce qui tourne aujourd'hui — 5 timers systemd sur le Pi**, sur **6 repos
+surveillés** (`data/repos.yaml`) :
+
+| Timer | Cadence | Rôle |
+|---|---|---|
+| `orchestrator-poll` | 5 min | tour léger (notifs, followup, CI, triage) + **une** action lourde sous `state/executor.lock` |
+| `orchestrator-sync` | 10 min | auto-update git + restart si le code a changé |
+| `orchestrator-sante` | 15 min | surveillance machine, alerte disque par palier (80/90/95%) |
+| `orchestrator-forge` | 1x/jour | conformité déclarative des repos (`data/forge.yaml`) |
+| `orchestrator-purge` | 1x/jour | purge des branches locales `ai/*` devenues inutiles |
+
+Plus deux services persistants : `orchestrator-bot` (Discord) et
+`orchestrator-server` (Flask `/health`, `/conso`).
+
+L'action lourde du poller suit une chaîne de priorité : révision d'une PR
+commentée > review demandée (`ai-review`) > résolution de conflit > réparation
+de CI rouge > première issue `ai-ready`. Chaque recherche de cette chaîne est
+isolée repo par repo — un timeout GitHub saute le repo, il ne tue plus le tour
+(correctif du 2026-07-30, cf. architecture §5).
+
+**Au-delà des phases 0–3**, ajouté depuis : forge (conformité), triage des
+tickets (labels `size:*`/`model:*`), modèle Claude configurable, surveillance
+machine, purge des workspaces. `lib/github.py` fait désormais lecture **et**
+écriture (branches, PR, commentaires, labels, rulesets, check runs).
 
 Validé live : issue #3 → PR #4 (mergée + nettoyée), issue #5 → PR #6
-(+ révision sur commentaire). Voir §7 pour la Phase 0.
+(+ révision sur commentaire). **104 tests** (`make test`).
 
 ---
 
@@ -67,7 +80,7 @@ Les pipelines actuels sont **one-shot sans état**. Ici, trois nouveautés :
 
 | Brique | Rôle | État |
 |---|---|---|
-| `lib/github.py` | wrapper API GitHub (lecture : `list_issues`). PAT scopé. | ✅ fait (lecture) |
+| `lib/github.py` | wrapper API GitHub. PAT scopé par repo. | ✅ fait (lecture **et** écriture) |
 | `lib/state.py` + `state/orchestrator.db` | mémoire d'idempotence (issues déjà notifiées) | ✅ fait |
 | `poll.py` + `infra/poll.sh` + `orchestrator-poll.timer` | boucle de polling → notif | ✅ fait |
 | `pipelines/dev_executor.py` | l'exécutant : issue → code → PR + auto-review | ✅ fait |
@@ -136,7 +149,7 @@ ce canal (`lib/notify` l'utilise déjà pour les process hors-bot).
 ### Phase 0 — Plomberie & confiance ✅ FAIT
 `lib/github.py` en lecture seule + `poll.py` qui notifie les issues `ai-ready`
 sur Discord, avec dédup SQLite. Valide : auth PAT, polling, dédup, notify.
-Déployé sur le Pi avec un timer 5 min. Détails d'implémentation en §7.
+Déployé sur le Pi avec un timer 5 min. Structure du code : architecture §3.
 
 ### Phase 1 — L'exécutant *(le cœur, ~80 % de la valeur)*
 `pipelines/dev_executor.py` : issue `ai-ready` → clone/pull workspace →
@@ -313,54 +326,69 @@ ticket à la fois.
 
 ---
 
-## 6. Prochaine action
+## 6. Reste à faire
 
-Les phases 0 à 3 sont faites : le pipeline vit en autonomie. La suite se
-décide à l'usage :
-- config par repo dans `repos.yaml` (tests, déploiement) quand un second
-  repo sera surveillé ;
-- sandbox des tests (`systemd-run --scope`, §5) avant tout repo tiers.
+Les phases 0 à 3 sont faites : le pipeline vit en autonomie. Rien d'urgent —
+liste tenue à jour, du plus mûr au plus spéculatif.
+
+**Déclencheur déjà franchi**
+- **Config par repo dans `repos.yaml`** — prévue « quand un second repo sera
+  surveillé » ; il y en a **6**. Seul `timeout` est configurable aujourd'hui.
+  Manque : commande de tests et de déploiement par repo (aujourd'hui
+  l'exécutant auto-détecte les tests).
+
+**Conditionné à un usage qu'on n'a pas encore**
+- **Sandbox des tests** (`systemd-run --scope`, cf. §5) — requis **avant de
+  surveiller un repo tiers non maîtrisé**. Aujourd'hui `Bash` exécute le code
+  cloné avec un simple `timeout` (600 s), assumé pour des repos perso.
+
+**Espace disque** (constaté le 2026-07-30, disque à 66%, 4,6 Go libres)
+- **Artefacts de build non purgés** — 1,1 Go de `node_modules` dans le
+  workspace `havre-app`, contre 3,9 Mo de `.git`. Gitignorés donc invisibles
+  pour git, liés à aucune PR : la purge (`pipelines/purge.py`) ne les touche
+  pas. Piste si la marge devient courte : purge ciblée sur les workspaces
+  inactifs depuis N jours, pour que le coût du rebuild à froid ne tombe jamais
+  sur un ticket en cours. **Décision non prise.**
+
+**Limites connues, jamais traitées**
+- `poll.py` marque une issue notifiée **même si le webhook a échoué** (`notify`
+  loggue mais ne remonte pas de statut) → pas de re-tentative. Même faiblesse
+  dans `pipelines/sante.py` : le palier d'alerte est enregistré *avant* l'envoi,
+  donc une alerte disque perdue n'est pas retentée — plus gênant là que sur une
+  notif de ticket.
+- Pas de gestion de la pagination GitHub (`per_page=100`, suffisant au volume).
+- Retirer puis re-poser `ai-ready` ne re-notifie pas (déjà en base).
+- **Réseau du Pi par intermittence** : `Temporary failure in name resolution`
+  le 2026-07-28, `ReadTimeout` de l'API GitHub le 2026-07-30 à 02:03. Désormais
+  encaissé proprement (⚠️ au lieu de 🚨) mais la cause n'a pas été cherchée.
 
 (`pipelines/dev_jira.py`, legacy d'avant le pivot, retiré le 2026-07-25.)
 
 ---
 
-## 7. Implémentation actuelle (Phase 0)
+## 7. Où regarder dans le code
 
-### Fichiers
-- **`lib/github.py`** — wrapper API REST GitHub, lecture seule.
-  `list_issues(repo, labels=None, state="open")` → `[{number, title, labels, url}]`,
-  exclut les PR. Auth via `GITHUB_TOKEN` (env) ; optionnel pour un repo public,
-  requis pour un privé. Lève `GitHubError` sur 401/404/erreur HTTP.
-- **`lib/state.py`** — idempotence SQLite (`state/orchestrator.db`, gitignored).
-  Table `issues_notifiees(repo, numero, notifiee_le)`, clé primaire `(repo, numero)`.
-  `deja_notifiee(repo, numero)` / `marquer_notifiee(repo, numero)`.
-- **`poll.py`** (racine) — un tour de polling : `list_issues(repo, labels="ai-ready")`,
-  filtre les non-vues via `lib/state`, notifie chaque nouvelle via `lib/notify`,
-  la marque. Repo = `argv[1]` sinon `WATCHED_REPO` du `.env`.
-- **`infra/poll.sh`** — wrapper systemd : `cd` repo, lance `.venv/bin/python poll.py "$WATCHED_REPO"`.
-- **`infra/systemd/orchestrator-poll.{service,timer}`** — oneshot, toutes les 5 min.
+⚠️ Cette section décrivait l'implémentation de la **Phase 0** (juillet 2026) et
+avait divergé du code : elle affirmait notamment que `lib/github.py` était « en
+lecture seule », faux depuis la Phase 1. Elle ne duplique plus l'inventaire des
+fichiers — **la référence à jour est
+[`architecture-mini-serveur-ia.md`](architecture-mini-serveur-ia.md) §3
+(structure) et §5 (exploitation, un bloc par timer)**. Ne restent ici que les
+éléments qui n'ont pas leur place ailleurs.
 
-### Convention de label
-Le label déclencheur est **`ai-ready`** (anglais). Piège vécu : ne pas le confondre
-avec `ia-ready` (français) — comme `idées`≠`idees`, GitHub matche à la lettre.
+### Convention de label — piège vécu
+Le label déclencheur est **`ai-ready`** (anglais). Ne pas le confondre avec
+`ia-ready` (français) : comme `idées` ≠ `idees`, GitHub matche à la lettre.
+Les autres labels du cycle : `ai-working`, `ai-failed`, `ai-review`, plus
+`size:*` / `model:*` / `triage:questions` posés par le triage.
 
-### Config requise (`.env`)
-- `GITHUB_TOKEN` — PAT (classic ou fine-grained), scope lecture Issues+Metadata.
-- `WATCHED_REPO` — `owner/nom` du repo surveillé (défaut `fgeronimi/ia-orchestrator`).
-- `DISCORD_WEBHOOK_URL` — webhook du canal `#orchestrateur` (les notifs du poller
-  passent par là, c'est un process hors-bot).
+### Config `.env`
+Toutes les clés sont documentées dans **`.env.example`** (clé sans valeur) —
+c'est la source de vérité, `make env-diff` compare les clés Mac/Pi sans jamais
+comparer les valeurs. Rappel des scopes du PAT : Contents + Pull requests +
+Issues en write, Actions en read (logs de CI), Administration en read (forge).
 
-### Lancer / observer
-```bash
-# manuel (Pi) :
-.venv/bin/python poll.py fgeronimi/ia-orchestrator
-# service : make install-timer   puis   journalctl -u orchestrator-poll -f
-# état DB :  sqlite3 state/orchestrator.db "SELECT * FROM issues_notifiees;"
-```
-
-### Limites connues (à traiter plus tard)
-- `poll.py` marque une issue notifiée **même si le webhook a échoué** (`notify`
-  loggue mais ne remonte pas de statut) → pas de re-tentative.
-- Pas de gestion de la pagination GitHub (`per_page=100`, suffisant au volume).
-- Retirer puis re-tagger une issue ne la re-notifie pas (déjà en base).
+### Historique des décisions
+Les choix structurants (forge GitHub, polling plutôt que webhooks, PR draft +
+merge humain, pas de sandbox pour l'instant) sont en §0 et §5 de ce document —
+ils restent valides et expliquent le *pourquoi* du code actuel.
