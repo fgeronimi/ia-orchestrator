@@ -7,7 +7,13 @@ Commandes (lecture seule, aucun appel Claude) :
 
 Le repo interrogé est le premier de data/repos.yaml (via poll.charger_repos),
 comme le poller.
+
+⚠️ Ce module tourne DANS la boucle asyncio du bot : tout appel bloquant
+(réseau, subprocess) doit passer par `asyncio.to_thread`, sinon le heartbeat
+Discord saute — vécu le 2026-07-27, `heartbeat blocked for more than 10s`.
 """
+
+import asyncio
 
 from lib import github, state
 
@@ -60,5 +66,8 @@ async def handle(text: str, message) -> str:
         repos = [e["repo"] for e in charger_repos()]
         if not repos:
             return "Aucun repo surveillé (data/repos.yaml vide et WATCHED_REPO absent)."
-        return "\n\n".join(f"__{repo}__\n{_statut(repo)}" for repo in repos)
+        # _statut() fait des appels GitHub synchrones : hors boucle asyncio.
+        blocs = [await asyncio.to_thread(_statut, repo) for repo in repos]
+        return "\n\n".join(f"__{repo}__\n{bloc}"
+                           for repo, bloc in zip(repos, blocs))
     return AIDE
