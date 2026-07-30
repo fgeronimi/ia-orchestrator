@@ -37,8 +37,11 @@ ESCALADES = (90, 95)
 CLE_PALIER = "sante_disque_palier"  # dernier palier alerté (table meta)
 
 SERVICES = ("orchestrator-bot", "orchestrator-server")
+# À tenir à jour avec infra/systemd/ : un timer absent d'ici est un timer dont
+# `@bot santé` ne dira jamais qu'il est mort.
 TIMERS = ("orchestrator-poll.timer", "orchestrator-sync.timer",
-          "orchestrator-forge.timer", "orchestrator-sante.timer")
+          "orchestrator-forge.timer", "orchestrator-sante.timer",
+          "orchestrator-purge.timer")
 
 
 def seuil() -> int:
