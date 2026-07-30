@@ -174,10 +174,10 @@ class ResumeTest(unittest.TestCase):
         self.assertIn("⚠️", texte)          # disque à 85% avec seuil à 80
 
     def test_octets_lisibles(self):
-        self.assertEqual(sante._octets(0), "0o")
-        self.assertEqual(sante._octets(512), "512o")
-        self.assertEqual(sante._octets(1024), "1.0K")
-        self.assertEqual(sante._octets(15 * 1024**3), "15G")
+        self.assertEqual(sante.octets(0), "0o")
+        self.assertEqual(sante.octets(512), "512o")
+        self.assertEqual(sante.octets(1024), "1.0K")
+        self.assertEqual(sante.octets(15 * 1024**3), "15G")
 
 
 if __name__ == "__main__":

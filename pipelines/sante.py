@@ -50,8 +50,12 @@ def seuil() -> int:
     return max(50, min(99, valeur))
 
 
-def _octets(n: float) -> str:
-    """1234567890 → '1.1G' (unité binaire, une décimale sous 10)."""
+def octets(n: float) -> str:
+    """1234567890 → '1.1G' (unité binaire, une décimale sous 10).
+
+    Public : `pipelines/purge.py` s'en sert pour que les tailles annoncées
+    dans ses notifs se lisent comme celles de `@bot santé`.
+    """
     for unite in ("o", "K", "M", "G", "T"):
         if abs(n) < 1024 or unite == "T":
             return f"{n:.1f}{unite}" if n < 10 and unite != "o" else f"{n:.0f}{unite}"
@@ -195,19 +199,19 @@ def resume() -> str:
     m = mesurer()
     d = m["disque"]
     lignes = [
-        f"{'disque':<11}{_octets(d['utilise']):>7} / {_octets(d['utilisable']):<6}"
+        f"{'disque':<11}{octets(d['utilise']):>7} / {octets(d['utilisable']):<6}"
         f"({d['pct']}%) {'⚠️' if _palier(d['pct']) else '✅'}",
-        f"{'libre':<11}{_octets(d['libre']):>7}",
+        f"{'libre':<11}{octets(d['libre']):>7}",
     ]
     if m["memoire"]:
         mem = m["memoire"]
         lignes.append(
-            f"{'RAM':<11}{_octets(mem['utilise']):>7} / "
-            f"{_octets(mem['total']):<6}({mem['pct']}%)")
+            f"{'RAM':<11}{octets(mem['utilise']):>7} / "
+            f"{octets(mem['total']):<6}({mem['pct']}%)")
         if mem["swap_total"]:
             lignes.append(
-                f"{'swap':<11}{_octets(mem['swap_utilise']):>7} / "
-                f"{_octets(mem['swap_total'])}")
+                f"{'swap':<11}{octets(mem['swap_utilise']):>7} / "
+                f"{octets(mem['swap_total'])}")
     if m["charge"]:
         lignes.append(f"{'charge':<11}" + "  ".join(f"{c:.2f}" for c in m["charge"]))
     if m["temperature"] is not None:
@@ -215,7 +219,7 @@ def resume() -> str:
     if m["uptime"]:
         lignes.append(f"{'uptime':<11}{m['uptime']}")
     if m["workspaces"] is not None:
-        lignes.append(f"{'workspaces':<11}{_octets(m['workspaces']):>7}")
+        lignes.append(f"{'workspaces':<11}{octets(m['workspaces']):>7}")
 
     def etats(units: dict[str, str], prefixe: str) -> str:
         return "  ".join(
@@ -243,7 +247,7 @@ async def surveiller() -> str:
             state.meta_effacer(CLE_PALIER)
             await notify.notify(
                 f"✅ Disque revenu sous {seuil()}% — à {pct}% "
-                f"({_octets(d['libre'])} libres).")
+                f"({octets(d['libre'])} libres).")
             return f"retour à la normale notifié ({pct}%)"
         return f"disque à {pct}% — sous le seuil de {seuil()}%"
 
@@ -252,11 +256,11 @@ async def surveiller() -> str:
 
     state.meta_ecrire(CLE_PALIER, str(palier))
     ws = m["workspaces"]
-    piste = f"\nstate/workspaces pèse {_octets(ws)}." if ws else ""
+    piste = f"\nstate/workspaces pèse {octets(ws)}." if ws else ""
     await notify.notify(
         f"🔴 Disque à {pct}% (palier {palier}%) — "
-        f"{_octets(d['utilise'])} utilisés sur {_octets(d['utilisable'])}, "
-        f"{_octets(d['libre'])} libres.{piste}\n"
+        f"{octets(d['utilise'])} utilisés sur {octets(d['utilisable'])}, "
+        f"{octets(d['libre'])} libres.{piste}\n"
         f"`@bot santé` pour le détail.")
     return f"alerte palier {palier}% envoyée ({pct}%)"
 

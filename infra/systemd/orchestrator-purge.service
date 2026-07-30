@@ -1,0 +1,23 @@
+# Purge des workspaces : supprime les branches locales ai/* dont la PR est
+# mergée, puis git gc pour rendre les octets.
+# Déclenché par orchestrator-purge.timer (oneshot, 1x/jour).
+# Installation :  make install-timer
+# Logs :          journalctl -u orchestrator-purge -f
+
+[Unit]
+Description=Orchestrateur IA - purge des workspaces (branches des PR mergées)
+After=network-online.target
+Wants=network-online.target
+# L'API GitHub est interrogée en lecture : un hoquet réseau doit se voir.
+OnFailure=orchestrator-fail-notify@%n.service
+
+[Service]
+Type=oneshot
+User=fgeronimi
+WorkingDirectory=/home/fgeronimi/ia-orchestrator
+EnvironmentFile=/home/fgeronimi/ia-orchestrator/.env
+# Pas de node ici (aucun appel `claude`) : PATH système suffit pour git.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash /home/fgeronimi/ia-orchestrator/infra/purge.sh
+
+PrivateTmp=true

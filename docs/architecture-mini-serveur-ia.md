@@ -122,6 +122,29 @@ Hors périmètre v1 : purge automatique des workspaces (l'humain décide), et
 surveillance d'autres axes que le disque en alerte (RAM/température sont
 affichées mais n'alertent pas — le Pi swappe sans mourir, et 66 °C est normal).
 
+### Purge des workspaces — ✅ v1 faite
+`dev_followup.traiter_merges` supprime la branche **distante** dès qu'une PR
+d'agent est mergée, mais la branche **locale** restait dans le workspace : au
+30/07, 28 branches `ai/*` mortes traînaient sur 5 workspaces. Timer
+`orchestrator-purge` (1x/jour, 03:30) → `purge.py` → `pipelines/purge.py`
+supprime les branches locales `ai/*` dont la PR est mergée, puis
+`reflog expire` + `git gc --prune=now` (sans ça, supprimer les refs ne rend
+aucun octet).
+
+**Périmètre volontairement étroit**, parce que le risque est de supprimer de
+trop : seulement les branches préfixées `ai/` (jamais une branche humaine),
+seulement si la PR est **mergée** (une PR fermée sans merge ou une branche sans
+PR peut porter du travail non repris — cas réel : 3 branches orphelines
+épargnées au premier passage), et **jamais pendant qu'un agent code** (le tour
+prend `state/executor.lock`, celui de l'action lourde de `poll.py`, et non un
+verrou propre).
+
+Hors périmètre : les artefacts de build (`node_modules`, `.turbo`, `dist`…).
+Ils sont gitignorés donc invisibles pour git, et pèsent bien plus lourd que
+l'historique — 1,1 Go de `node_modules` dans `havre-app` contre 3,9 Mo de
+`.git` — mais ils ne sont liés à aucune PR et les rebâtir coûte du temps de CI
+sur le Pi. Décision séparée, non prise.
+
 ---
 
 ## 3. Structure réelle du repo
@@ -136,6 +159,7 @@ ia-orchestrator/
 ├── poll.py                    # ✅ poller multi-repos : notifs + followup + CI + 1 action lourde/tour
 ├── forge.py                   # ✅ 1 passage/jour : conformité déclarative des repos surveillés
 ├── sante.py                   # ✅ 1 tour/15 min : surveillance machine (alerte disque par palier)
+├── purge.py                   # ✅ 1 passage/jour : purge des branches locales des PR mergées
 ├── data/
 │   ├── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
 │   └── forge.yaml             # ✅ conditions de conformité (labels, fichiers, protection main)
@@ -144,7 +168,8 @@ ia-orchestrator/
 │   ├── dev_followup.py        # ✅ suivi : nettoyage post-merge, CI (notif + détection rouge)
 │   ├── dev_statut.py          # ✅ @bot conso / statut / santé depuis Discord (lecture seule)
 │   ├── forge.py               # ✅ vérifie data/forge.yaml sur chaque repo, ticket par écart
-│   └── sante.py               # ✅ mesures machine (disque, RAM, charge, temp) + alerte disque par palier
+│   ├── sante.py               # ✅ mesures machine (disque, RAM, charge, temp) + alerte disque par palier
+│   └── purge.py               # ✅ supprime les branches locales ai/* des PR mergées + git gc
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
 │   ├── notify.py              # notif : bot si dispo, sinon webhook, sinon print
@@ -159,6 +184,7 @@ ia-orchestrator/
 │   ├── poll.sh                # ✅ un tour du poller (appelé par le timer poll)
 │   ├── forge.sh                # ✅ un passage de la forge (appelé par le timer forge)
 │   ├── sante.sh               # ✅ un tour de surveillance machine (appelé par le timer santé)
+│   ├── purge.sh               # ✅ un passage de purge des workspaces (appelé par le timer purge)
 │   └── systemd/
 │       ├── orchestrator-bot.service      # bot.py
 │       ├── orchestrator-server.service   # server.py
@@ -166,6 +192,7 @@ ia-orchestrator/
 │       ├── orchestrator-poll.{service,timer}   # poller GitHub, toutes les 5 min
 │       ├── orchestrator-forge.{service,timer}  # forge (conformité), 1x/jour
 │       ├── orchestrator-sante.{service,timer}  # surveillance machine, toutes les 15 min
+│       ├── orchestrator-purge.{service,timer}  # purge des workspaces, 1x/jour (03:30)
 │       └── orchestrator-fail-notify@.service   # OnFailure → notif Discord 🚨
 └── docs/
     ├── architecture-mini-serveur-ia.md   # ce fichier
@@ -204,6 +231,7 @@ ia-orchestrator/
 | `make env-diff` | compare les **clés** des deux `.env` — jamais les valeurs |
 | `make remote-poll` / `remote-conso` | déclenche un tour de poll / affiche la conso Claude par ticket |
 | `make remote-sante` | santé du Pi (disque, RAM, charge, température, services) |
+| `make remote-purge` | purge les workspaces du Pi (branches locales des PR mergées) |
 
 **Prérequis SSH (une fois) :** les cibles distantes passent par
 `fgeronimi@ia-orchestrator.home`. Le user est explicite dans le Makefile
@@ -217,8 +245,8 @@ du Pi (`make deploy PI_HOST=<ip-tailscale>`).
 |---|---|
 | `make sync` | pull, rebase, push, restart si code changé |
 | `make pull` / `push` / `restart` / `status` / `logs` / `test` | opérations unitaires |
-| `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min + forge 1x/j + santé 15 min) |
-| `make poll` / `conso` / `forge` / `sante` | tour de poll / conso Claude par ticket / vérification de conformité / surveillance machine, à la main |
+| `make install-timer` | installe les timers systemd (auto-update 10 min + poller GitHub 5 min + forge 1x/j + santé 15 min + purge 1x/j) |
+| `make poll` / `conso` / `forge` / `sante` / `purge` | tour de poll / conso Claude par ticket / vérification de conformité / surveillance machine / purge des workspaces, à la main |
 
 ### Poller GitHub (`orchestrator-poll.timer` → `poll.py`)
 Toutes les 5 min, `poll.py`, pour **chaque repo** de `data/repos.yaml`
@@ -276,6 +304,24 @@ journalctl -u orchestrator-sante -f                        # logs de la surveill
 make sante                                                 # un tour à la main
 SEUIL_DISQUE=60 .venv/bin/python sante.py                  # tester l'alerte (⚠️ notifie pour de vrai)
 sqlite3 state/orchestrator.db "SELECT * FROM meta WHERE cle='sante_disque_palier';"
+```
+
+### Purge des workspaces (`orchestrator-purge.timer` → `purge.py`)
+Une fois par jour (03:30, décalé de la forge), sous **`state/executor.lock`**
+— celui de l'action lourde, pas un verrou propre : la purge touche aux branches
+des workspaces où l'exécutant code, les deux ne doivent jamais se croiser. Si
+l'exécutant travaille, on repasse le lendemain. Pour chaque repo de
+`data/repos.yaml` : intersection des branches locales `ai/*` et des branches de
+PR **mergées** (`list_pulls(state="closed")`, `merged_at` non nul, `head_repo`
+égal au repo pour écarter les forks), suppression par `git branch -D` (la
+branche est mergée en amont, pas forcément localement), puis `reflog expire` +
+`git gc --prune=now`. Si la branche courante est à purger, HEAD est détaché
+d'abord (`preparer()` refait un `checkout -B <base>` au prochain usage).
+Notification 🧹 seulement si quelque chose a été purgé.
+```bash
+journalctl -u orchestrator-purge -f                        # logs de la purge
+make purge                                                 # un passage à la main
+cd state/workspaces/<owner>-<nom> && git branch            # branches restantes
 ```
 
 ### Auto-update git (`infra/sync.sh` + `orchestrator-sync.timer`)

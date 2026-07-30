@@ -1,0 +1,16 @@
+# Déclenche orchestrator-purge.service une fois par jour.
+# Décalé de la forge (00:01) pour ne pas empiler deux tours git au même moment.
+# Installation :  make install-timer
+# État :          systemctl list-timers orchestrator-purge
+
+[Unit]
+Description=Orchestrateur IA - purge des workspaces, 1x/jour
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=300
+# Rattrape le passage si le Pi était éteint à l'heure dite
+Persistent=true
+
+[Install]
+WantedBy=timers.target
