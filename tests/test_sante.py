@@ -138,6 +138,27 @@ class SurveillerTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mock.await_count, 3)
 
 
+class UnitsSurveillesTest(unittest.TestCase):
+    """Garde-fou : `@bot santé` doit connaître tous les timers du repo.
+
+    Oublié une fois (timer purge ajouté le 2026-07-30 sans toucher TIMERS) :
+    la commande affichait 4 timers sur 5, donc n'aurait jamais signalé la mort
+    du cinquième.
+    """
+
+    def test_tous_les_timers_du_repo_sont_surveilles(self):
+        systemd = Path(__file__).parent.parent / "infra" / "systemd"
+        sur_disque = {f.name for f in systemd.glob("*.timer")}
+        self.assertEqual(sur_disque, set(sante.TIMERS),
+                         "TIMERS de pipelines/sante.py désynchronisé de "
+                         "infra/systemd/ — un timer ne serait pas surveillé")
+
+    def test_tous_les_services_longs_sont_surveilles(self):
+        """Les services persistants (pas les oneshot de timer) sont dans SERVICES."""
+        self.assertEqual(set(sante.SERVICES),
+                         {"orchestrator-bot", "orchestrator-server"})
+
+
 class ResumeTest(unittest.TestCase):
     def setUp(self):
         # Seuil explicite : le rendu du ⚠️ en dépend.
