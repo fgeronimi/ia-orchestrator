@@ -2,7 +2,8 @@
 
 > Document de référence, tenu à jour pour servir de contexte Claude Code.
 > Reflète l'état **réellement déployé**, pas seulement l'intention.
-> Dernière mise à jour : 2026-07-25 (Phases 0 à 3 du pipeline dev GitHub validées live).
+> Dernière mise à jour : 2026-09-06 (triage documenté, §7 remis en phase avec le
+> code — lui-même inchangé depuis le 2026-07-30).
 
 ---
 
@@ -46,7 +47,7 @@ secours (shell navigateur).
 
 ## 2. État des pipelines
 
-### Pipeline Dev GitHub — 🚧 en construction — **cœur du projet**
+### Pipeline Dev GitHub — ✅ en exploitation — **cœur du projet**
 **Point d'entrée = les issues GitHub.** Tu écris tes tickets directement dans
 GitHub et tu les tagges `ai-ready` ; le Pi les implémente, ouvre des PR, se
 relit, et gère la suite après ton merge. Spécifié en détail dans
@@ -79,9 +80,11 @@ phases 0→3, implémentation actuelle).
   surveillance des PR d'agent (`dev_followup.surveiller_ci`, notif ✅/❌ une
   fois par sha, repush → nouveau suivi). Validé sur la PR #8.
 
-> **Repos surveillés** (`data/repos.yaml`) : `ia-orchestrator` (ce repo),
-> `havre-data` et `havre-app` (projet havre — assistant hyperacousie,
-> timeouts dédiés). Chaque repo surveillé documente dans son CLAUDE.md
+> **Repos surveillés** (`data/repos.yaml`) — six au 2026-09-06 :
+> `ia-orchestrator` (ce repo), `havre-data`, `havre-app` et `havre-mesure`
+> (projet havre — assistant hyperacousie, timeouts dédiés), `havre-infra`
+> (Terraform : l'agent relit et édite, n'applique jamais — pas d'auth GCP sur
+> le Pi) et `fgeronimi.github.io`. Chaque repo surveillé documente dans son CLAUDE.md
 > (§0.1) les règles que les agents doivent y respecter ; le mode d'emploi
 > côté humain est dans leurs README (« Workflow de développement »).
 >
@@ -90,6 +93,40 @@ phases 0→3, implémentation actuelle).
 > Côté Discord, le bot **notifie** (`lib/notify`) et répond aux requêtes de
 > suivi dans `#orchestrateur` : `@bot conso` / `@bot statut`
 > (`pipelines/dev_statut.py`, lecture seule).
+
+### Triage — premier lecteur des tickets — ✅ v1 + clarification faites
+Avant qu'un agent n'implémente un ticket sans supervision, une passe de
+raisonnement pur le relit. Appelée dans le **tour léger** de `poll.py` (hors
+verrou `state/executor.lock` — elle ne consomme pas l'action lourde du tour) :
+`pipelines/dev_triage.trier_nouveaux()` évalue chaque issue nouvellement
+ouverte par le **propriétaire** du repo et pose soit `size:S|M|L` +
+`model:<alias>` avec un commentaire 🤖 résumant ce qu'un agent comprendrait,
+soit `triage:questions` avec au plus 3 questions bloquantes.
+
+`allowed_tools=[]` et modèle léger (`triage: haiku` dans `data/modeles.yaml`) :
+c'est ce qui la rend quasi gratuite — **16 appels pour 0,51 $** sur la période
+de construction, contre 0,62 $ l'unité pour l'auto-review.
+
+Le champ « fichiers probables » est **ancré** : l'arborescence réelle du repo
+(API `git/trees`, zéro token) est injectée dans le prompt, **et** les chemins
+répondus sont filtrés côté code — la consigne de prompt seule ne suffit pas
+(post-mortem des fichiers hallucinés, README). Sortie JSON stricte : un parse
+raté est loggué et ignoré, jamais de commentaire poubelle sur le ticket.
+
+**Boucle de clarification** : quand le propriétaire répond sur une issue
+`triage:questions`, `clarifier_nouveaux()` re-trie avec le fil complet —
+questions levées → label retiré et « prêt pour ai-ready », sinon nouvelles
+questions. Plafond de 2 tours (`state.triage_epuise`), au-delà le triage se
+tait pour cette issue. Les commentaires traités sont marqués vus **dès que
+l'appel Claude est consommé**, avant les écritures GitHub : sans ça le poller
+rejouait la même réponse toutes les 5 minutes (post-mortem, README).
+
+Owner-only (un repo public laisse n'importe qui commenter, et un commentaire
+pilote un agent), ignore les issues `forge:` et celles déjà
+`ai-ready`/`ai-working` — déjà lues par un humain ou en cours. Dédup SQLite
+(`state.issues_triees`). Le portail `ai-ready` reste **un geste humain** : le
+triage ne le pose jamais. L'analyse produite est réinjectée dans le prompt de
+l'exécutant quand le ticket part en implémentation.
 
 ### Forge — conformité déclarative des repos surveillés — ✅ v1 faite
 Les repos surveillés doivent tous respecter les mêmes conditions (labels
@@ -173,11 +210,13 @@ ia-orchestrator/
 ├── purge.py                   # ✅ 1 passage/jour : purge des branches locales ai/* devenues inutiles
 ├── data/
 │   ├── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
-│   └── forge.yaml             # ✅ conditions de conformité (labels, fichiers, protection main)
+│   ├── forge.yaml             # ✅ conditions de conformité (labels, fichiers, protection main)
+│   └── modeles.yaml           # ✅ modèle Claude par défaut, par type de tâche
 ├── pipelines/
 │   ├── dev_executor.py        # ✅ l'exécutant : issue → code → PR + auto-review + révision + fix CI
 │   ├── dev_followup.py        # ✅ suivi : nettoyage post-merge, CI (notif + détection rouge)
 │   ├── dev_statut.py          # ✅ @bot conso / statut / santé depuis Discord (lecture seule)
+│   ├── dev_triage.py          # ✅ premier lecteur des tickets : size/model, questions, clarification
 │   ├── forge.py               # ✅ vérifie data/forge.yaml sur chaque repo, ticket par écart
 │   ├── sante.py               # ✅ mesures machine (disque, RAM, charge, temp) + alerte disque par palier
 │   └── purge.py               # ✅ supprime les branches locales ai/* mergées ou déjà dans main + git gc
@@ -397,19 +436,30 @@ vécu : PATH node ajouté au repo mais unité installée jamais rafraîchie →
 ## 7. Reste à faire
 
 **Cap principal**
-- **Pipeline dev GitHub** — dérouler `docs/plan-orchestrateur-dev.md` :
-  Phases 0 et 1 faites, prochaine étape = Phase 2 (suite après merge :
-  déploiement/nettoyage + boucle de révision).
-
-**Court terme**
-- **VS Code Remote-SSH** depuis le Mac (via LAN) pour du dev confortable.
-- Déployer l'auto-update sur le Pi (`make install-timer` + drop-in sudoers).
+- **Rien d'ouvert.** Les phases 0→3 de `docs/plan-orchestrateur-dev.md` sont
+  faites et validées live, et les briques d'après (forge, triage, surveillance,
+  purge) tournent. Le système est en **régime d'exploitation** : la suite se
+  décide à l'usage, pas sur plan.
 
 **Si besoin avéré (pas avant)**
+- **Sandbox des tests** (§5) : `Bash` exécute le code du repo cloné sous simple
+  `timeout`. Acceptable sur des repos perso — **à traiter avant de surveiller un
+  repo tiers non maîtrisé**. C'est le seul reste-à-faire à vraie portée de
+  sécurité.
+- Config par repo étendue dans `repos.yaml` (commandes de test, déploiement) :
+  seul `timeout` est lu aujourd'hui.
+- Coût de l'auto-review : premier poste de dépense (25,83 $ sur 53,91 $ au
+  total, 42 appels pour 28 implémentations — chaque repush en relance une).
+  Piste : modèle plus léger par défaut, ou diff incrémental sur repush.
 - Notifs par canal distinct (aujourd'hui un seul `DISCORD_WEBHOOK_URL`).
 - Migration VPS (Hetzner ~4,50 €/mois) : rejouer `infra/setup.sh` + copier
   `.env` et l'état.
+- VS Code Remote-SSH depuis le Mac (confort de dev, jamais bloquant).
 
 **Vigilance matériel (Pi)**
-- microSD 16GB : limite pour du 24/7 long terme (usure écriture SQLite/logs) —
-  envisager boot SSD/USB. Refroidissement passif : surveiller le throttling.
+- microSD 15 Go : **78 % au 2026-09-06** (2,9 Go libres, dont 1,3 Go de
+  workspaces). Sous surveillance automatique depuis le 30/07 (alerte Discord à
+  80/90/95 %) et purge quotidienne des branches mortes. Reste le sujet de fond
+  de l'usure d'écriture en 24/7 (SQLite, logs) → boot SSD/USB.
+- Refroidissement passif : 52 °C au repos, pas de throttling observé.
+  Uptime 35 j.
