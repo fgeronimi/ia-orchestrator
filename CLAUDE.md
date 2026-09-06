@@ -6,13 +6,18 @@ réel du système, environnement, état des pipelines, reste à faire).
 
 ## Ce qu'est ce projet
 
-Orchestrateur d'agents Claude Code tournant sur un Raspberry Pi 4, piloté par
-Discord et (à venir) par GitHub : tu crées des tickets, l'orchestrateur les
-implémente, ouvre des PR et gère la suite. Deux services systemd tournent en
-autonomie : `orchestrator-bot` (bot.py) et `orchestrator-server` (server.py).
+Orchestrateur d'agents Claude Code tournant sur un Raspberry Pi 4, **piloté par
+GitHub** (les issues sont le point d'entrée) et suivi depuis Discord : tu crées
+des tickets, l'orchestrateur les trie, les implémente, ouvre des PR, répare sa
+CI et gère la suite après ton merge.
 
-**Cap actuel : construction du pipeline dev GitHub — voir
-`docs/plan-orchestrateur-dev.md`.**
+Tournent en autonomie : deux services systemd — `orchestrator-bot` (bot.py) et
+`orchestrator-server` (server.py) — et cinq timers (`poll` 5 min, `sync`
+10 min, `sante` 15 min, `forge` et `purge` 1x/jour).
+
+**Cap actuel : régime d'exploitation.** Les phases 0→3 du pipeline dev sont
+faites et validées live ; la suite se décide à l'usage. Reste à faire et
+points de vigilance : §7 de `docs/architecture-mini-serveur-ia.md`.
 
 ## Environnement
 
