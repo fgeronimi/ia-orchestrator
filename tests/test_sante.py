@@ -6,10 +6,11 @@ Lancer : python3 -m unittest tests.test_sante -v
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from lib import state
+from lib import github, state
 from pipelines import sante
 
 
@@ -136,6 +137,107 @@ class SurveillerTest(unittest.IsolatedAsyncioTestCase):
                 with patch("pipelines.sante.mesurer", return_value=_disque(pct)):
                     await sante.surveiller()
             self.assertEqual(mock.await_count, 3)
+
+
+MAINTENANT = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+
+
+def _token(valide, expire_dans: timedelta | None = None, erreur=None) -> dict:
+    exp = MAINTENANT + expire_dans if expire_dans is not None else None
+    return {"valide": valide, "expiration": exp, "erreur": erreur}
+
+
+class SurveillerTokenTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        state.DB = Path(self._tmp.name) / "orchestrator.db"
+        self.notif = patch("pipelines.sante.notify.notify", new_callable=AsyncMock)
+        self.mock = self.notif.start()
+
+    def tearDown(self):
+        self.notif.stop()
+        self._tmp.cleanup()
+
+    async def _tour(self, info: dict) -> str:
+        with patch("pipelines.sante.github.etat_token", return_value=info):
+            return await sante.surveiller_token(MAINTENANT)
+
+    async def test_token_valide_sans_expiration_silence(self):
+        await self._tour(_token(True))
+        self.mock.assert_not_awaited()
+
+    async def test_token_loin_de_l_expiration_silence(self):
+        await self._tour(_token(True, timedelta(days=30)))
+        self.mock.assert_not_awaited()
+
+    async def test_token_mort_alerte_une_seule_fois(self):
+        for _ in range(3):
+            await self._tour(_token(False, erreur="401 — token expiré ou révoqué"))
+        self.assertEqual(self.mock.await_count, 1)
+        self.assertIn("401", self.mock.await_args.args[0])
+
+    async def test_github_injoignable_n_alerte_pas_et_garde_la_memoire(self):
+        """Une panne GitHub ne doit ni alerter ni passer pour un retour à la normale."""
+        await self._tour(_token(False, erreur="401"))
+        await self._tour(_token(None, erreur="HTTP 502"))
+        await self._tour(_token(False, erreur="401"))
+        self.assertEqual(self.mock.await_count, 1)
+
+    async def test_preavis_j7_puis_relance_j1(self):
+        await self._tour(_token(True, timedelta(days=6)))
+        await self._tour(_token(True, timedelta(days=5)))
+        self.assertEqual(self.mock.await_count, 1)
+        self.assertIn("7 j", self.mock.await_args.args[0])
+        await self._tour(_token(True, timedelta(hours=20)))
+        self.assertEqual(self.mock.await_count, 2)
+        self.assertIn("1 j", self.mock.await_args.args[0])
+
+    async def test_nouveau_token_notifie_le_retour_puis_se_tait(self):
+        await self._tour(_token(False, erreur="401"))
+        await self._tour(_token(True, timedelta(days=90)))
+        self.assertEqual(self.mock.await_count, 2)
+        self.assertIn("✅", self.mock.await_args.args[0])
+        await self._tour(_token(True, timedelta(days=90)))
+        self.assertEqual(self.mock.await_count, 2)
+
+
+class EtatTokenTest(unittest.TestCase):
+    """lib.github.etat_token : traduction de la réponse HTTP, sans réseau."""
+
+    def _reponse(self, code: int, entetes: dict | None = None):
+        r = MagicMock(status_code=code, headers=entetes or {})
+        return patch("lib.github.requests.get", return_value=r)
+
+    def test_token_absent(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIs(github.etat_token()["valide"], False)
+
+    def test_401(self):
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "x"}), self._reponse(401):
+            self.assertIs(github.etat_token()["valide"], False)
+
+    def test_5xx_inconnu(self):
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "x"}), self._reponse(502):
+            self.assertIsNone(github.etat_token()["valide"])
+
+    def test_reseau_en_panne_inconnu(self):
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "x"}), \
+             patch("lib.github.requests.get",
+                   side_effect=github.requests.ConnectionError("dns")):
+            self.assertIsNone(github.etat_token()["valide"])
+
+    def test_expiration_lue_dans_le_header(self):
+        entetes = {"github-authentication-token-expiration": "2026-12-01 10:00:00 UTC"}
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "x"}), self._reponse(200, entetes):
+            info = github.etat_token()
+        self.assertIs(info["valide"], True)
+        self.assertEqual(info["expiration"],
+                         datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc))
+
+    def test_expiration_avec_offset(self):
+        self.assertEqual(github._parse_expiration("2026-12-01 11:00:00 +0100"),
+                         datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc))
+        self.assertIsNone(github._parse_expiration("n'importe quoi"))
 
 
 class UnitsSurveillesTest(unittest.TestCase):

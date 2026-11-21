@@ -87,14 +87,14 @@ L'état vit dans les **labels GitHub** de l'issue :
 ```
 poll.py                    # un tour : notifs + followup + CI, puis 1 action lourde (verrou)
 forge.py                   # un passage : conformité déclarative des repos surveillés (verrou)
-sante.py                   # un tour de surveillance machine (disque : alerte par palier)
+sante.py                   # un tour de surveillance machine (disque par palier + token GitHub)
 purge.py                   # un passage : purge des branches locales devenues inutiles (verrou)
 pipelines/
 ├── dev_executor.py        # exécute, révise, répare la CI (les appels Claude)
 ├── dev_followup.py        # suivi léger : nettoyage post-merge, CI (notif + détection)
 ├── dev_statut.py          # @bot conso / statut / santé depuis Discord
 ├── forge.py               # vérifie data/forge.yaml sur chaque repo, ticket par écart
-├── sante.py               # mesures machine (disque, RAM, charge, temp) + alerte disque
+├── sante.py               # mesures machine (disque, RAM, charge, temp) + alertes disque et token
 └── purge.py               # supprime les branches locales ai/* mergées ou déjà dans main + git gc
 lib/
 ├── claude.py              # wrapper claude -p (JSON : texte + tokens + coût, quota détecté)
