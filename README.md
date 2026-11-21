@@ -134,8 +134,8 @@ make install-timer                          # timers : poller (5 min) + auto-upd
 Côté GitHub, une fois par repo surveillé :
 - créer les labels `ai-ready`, `ai-working`, `ai-failed`, `ai-review` ;
 - un **PAT fine-grained** scopé au repo : Contents, Pull requests, Issues en
-  write (+ Actions en read pour les logs de CI, + Administration en read pour
-  la forge) ;
+  write ; Actions, Checks, Administration en read (détail et raisons dans
+  `.env.example`) ;
 - protéger `main` (l'agent ne pousse que sur `ai/*`, mais ceinture et bretelles
   — et c'est justement ce que la forge vérifie).
 
