@@ -1,10 +1,13 @@
-"""Santé de la machine — surveillance du disque et état du Pi.
+"""Santé de la machine — surveillance du disque, du token GitHub et état du Pi.
 
 Deux usages, une seule source de mesures (`mesurer()`) :
 
 - **Surveillance** (`surveiller()`, appelée par le timer `orchestrator-sante`
   via `sante.py` à la racine) : alerte Discord dès que le disque atteint
   `SEUIL_DISQUE` (défaut 80%), puis à chaque palier franchi (90%, 95%).
+  `surveiller_token()` alerte si le GITHUB_TOKEN est mort ou expire bientôt :
+  sans ça, un token expiré ne se voit qu'à travers les échecs du poll, repo
+  par repo, sans que la cause soit nommée.
 - **Consultation** (`resume()`, appelée par `dev_statut` sur `@bot santé`) :
   photo lisible de l'état du Pi, sans rien alerter.
 
@@ -19,12 +22,14 @@ Les mesures propres à Linux (/proc, /sys) renvoient None ailleurs (Mac), pour
 que le module reste importable et testable hors du Pi.
 """
 
+import asyncio
 import os
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import notify, state
+from lib import github, notify, state
 
 RACINE = Path(__file__).parent.parent
 WORKSPACES = RACINE / "state" / "workspaces"
@@ -35,6 +40,11 @@ SEUIL_DEFAUT = 80
 # re-alerter, c'est une aggravation.
 ESCALADES = (90, 95)
 CLE_PALIER = "sante_disque_palier"  # dernier palier alerté (table meta)
+
+# Préavis d'expiration du token, en jours : une alerte à J-7 pour avoir le
+# temps, une relance à J-1.
+PREAVIS_TOKEN = (7, 1)
+CLE_TOKEN = "sante_token_etat"  # dernier état du token alerté (table meta)
 
 SERVICES = ("orchestrator-bot", "orchestrator-server")
 # À tenir à jour avec infra/systemd/ : un timer absent d'ici est un timer dont
@@ -268,6 +278,56 @@ async def surveiller() -> str:
     return f"alerte palier {palier}% envoyée ({pct}%)"
 
 
+def _etat_token(info: dict, maintenant: datetime) -> tuple[str, str] | None:
+    """(état, message) à alerter, ('ok', '') si tout va bien, None si inconnu.
+
+    L'état ('invalide', 'J7', 'J1', 'ok') est ce qu'on mémorise pour l'anti-spam.
+    """
+    if info["valide"] is None:
+        return None
+    if not info["valide"]:
+        return ("invalide",
+                f"🔴 GITHUB_TOKEN inutilisable ({info['erreur']}) — le poll, la "
+                f"forge et les PR sont à l'arrêt. Régénérer le PAT puis "
+                f"`make env-push` depuis le Mac.")
+    exp = info["expiration"]
+    if exp is None:
+        return ("ok", "")
+    restant = exp - maintenant
+    for jours in sorted(PREAVIS_TOKEN):
+        if restant.total_seconds() <= jours * 86400:
+            return (f"J{jours}",
+                    f"⚠️ GITHUB_TOKEN expire le {exp:%Y-%m-%d %H:%M} UTC "
+                    f"(moins de {jours} j). Régénérer le PAT puis "
+                    f"`make env-push` depuis le Mac.")
+    return ("ok", "")
+
+
+async def surveiller_token(maintenant: datetime | None = None) -> str:
+    """Un tour de vérification du token. Notifie à chaque changement d'état."""
+    info = await asyncio.to_thread(github.etat_token)
+    verdict = _etat_token(info, maintenant or datetime.now(timezone.utc))
+    if verdict is None:
+        return f"token : état inconnu ({info['erreur']}), rien alerté"
+    etat, message = verdict
+    dernier = state.meta_lire(CLE_TOKEN)
+
+    if etat == "ok":
+        if dernier is not None:
+            state.meta_effacer(CLE_TOKEN)
+            await notify.notify("✅ GITHUB_TOKEN de nouveau valide.")
+            return "token : retour à la normale notifié"
+        return "token : valide"
+
+    # Comparaison d'état et non de gravité : passer de 'invalide' à 'J7',
+    # c'est un nouveau token déjà presque expiré, ça mérite son alerte.
+    if etat == dernier:
+        return f"token : {etat}, déjà alerté"
+    state.meta_ecrire(CLE_TOKEN, etat)
+    await notify.notify(message)
+    return f"token : alerte {etat} envoyée"
+
+
 async def handle() -> str:
     """Point d'entrée du pipeline (timer systemd)."""
-    return await surveiller()
+    return f"{await surveiller()} | {await surveiller_token()}"

@@ -206,7 +206,7 @@ ia-orchestrator/
 ├── server.py                  # endpoint Flask /health (port 5000)
 ├── poll.py                    # ✅ poller multi-repos : notifs + followup + CI + 1 action lourde/tour
 ├── forge.py                   # ✅ 1 passage/jour : conformité déclarative des repos surveillés
-├── sante.py                   # ✅ 1 tour/15 min : surveillance machine (alerte disque par palier)
+├── sante.py                   # ✅ 1 tour/15 min : surveillance machine (alerte disque par palier + token GitHub)
 ├── purge.py                   # ✅ 1 passage/jour : purge des branches locales ai/* devenues inutiles
 ├── data/
 │   ├── repos.yaml             # ✅ repos surveillés (fallback WATCHED_REPO)
@@ -218,7 +218,7 @@ ia-orchestrator/
 │   ├── dev_statut.py          # ✅ @bot conso / statut / santé depuis Discord (lecture seule)
 │   ├── dev_triage.py          # ✅ premier lecteur des tickets : size/model, questions, clarification
 │   ├── forge.py               # ✅ vérifie data/forge.yaml sur chaque repo, ticket par écart
-│   ├── sante.py               # ✅ mesures machine (disque, RAM, charge, temp) + alerte disque par palier
+│   ├── sante.py               # ✅ mesures machine (disque, RAM, charge, temp) + alerte disque par palier + token GitHub
 │   └── purge.py               # ✅ supprime les branches locales ai/* mergées ou déjà dans main + git gc
 ├── lib/
 │   ├── claude.py              # wrapper subprocess `claude -p` (timeout, allowed_tools)
@@ -342,18 +342,24 @@ sqlite3 state/orchestrator.db "SELECT * FROM forge_signale;"  # état dédup
 ### Surveillance machine (`orchestrator-sante.timer` → `sante.py`)
 Toutes les 15 min, `sante.py` mesure le disque, la RAM, la charge, la
 température et l'état des services/timers — mesures purement locales (`/proc`,
-`/sys`, `df`, `systemctl`), aucun appel Claude ni GitHub. Alerte Discord 🔴 dès
+`/sys`, `df`, `systemctl`), aucun appel Claude. Alerte Discord 🔴 dès
 `SEUIL_DISQUE` (défaut 80%), puis aux paliers 90% et 95%, **une seule fois par
 palier** (dernier palier mémorisé dans la table `meta`) ; notif ✅ de retour à
 la normale en repassant sous le seuil, qui réarme l'alerte. Le pourcentage est
 calculé comme `df` (`utilise / (utilise + libre)`) et non `utilise / total` :
 la réserve root d'ext4 (~5%) n'est pas utilisable, la compter fausserait le
 seuil de ~3 points.
+
+Même tour : un `GET /user` valide le `GITHUB_TOKEN`. Alerte 🔴 s'il est absent
+ou en 401, ⚠️ à J-7 puis J-1 de son expiration (header
+`github-authentication-token-expiration`), ✅ quand il redevient valide. Une
+alerte par changement d'état (clé `sante_token_etat` dans `meta`). GitHub
+injoignable ou en 5xx → rien alerté : une panne GitHub n'est pas un token mort.
 ```bash
 journalctl -u orchestrator-sante -f                        # logs de la surveillance
 make sante                                                 # un tour à la main
 SEUIL_DISQUE=60 .venv/bin/python sante.py                  # tester l'alerte (⚠️ notifie pour de vrai)
-sqlite3 state/orchestrator.db "SELECT * FROM meta WHERE cle='sante_disque_palier';"
+sqlite3 state/orchestrator.db "SELECT * FROM meta WHERE cle LIKE 'sante_%';"
 ```
 
 ### Purge des workspaces (`orchestrator-purge.timer` → `purge.py`)

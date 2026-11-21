@@ -11,6 +11,7 @@ commentaires) viendra en phase 1.
 """
 
 import os
+from datetime import datetime, timezone
 
 import requests
 
@@ -49,6 +50,46 @@ def _request(method: str, path: str, payload: dict | None = None,
 
 def _get(path: str, params: dict | None = None):
     return _request("GET", path, params=params)
+
+
+def _parse_expiration(brut: str | None) -> datetime | None:
+    """'2026-12-01 10:00:00 UTC' (ou '+0100') → datetime aware, None si illisible."""
+    if not brut:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S %z"):
+        try:
+            dt = datetime.strptime(brut.strip(), fmt)
+        except ValueError:
+            continue
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return None
+
+
+def etat_token() -> dict:
+    """Validité du GITHUB_TOKEN via GET /user — ne lève jamais.
+
+    Hors de `_request` parce qu'il faut le header d'expiration, que `_request`
+    jette. `valide` vaut None quand GitHub est injoignable ou en 5xx : on ne
+    sait pas, et une panne GitHub ne doit pas passer pour un token mort.
+    """
+    if not os.environ.get("GITHUB_TOKEN"):
+        return {"valide": False, "erreur": "GITHUB_TOKEN absent du .env",
+                "expiration": None}
+    try:
+        r = requests.get(f"{API}/user", headers=_headers(), timeout=15)
+    except requests.RequestException as e:
+        return {"valide": None, "erreur": f"GitHub injoignable : {e}",
+                "expiration": None}
+    if r.status_code == 401:
+        return {"valide": False, "erreur": "401 — token expiré ou révoqué",
+                "expiration": None}
+    if r.status_code >= 300:
+        return {"valide": None, "erreur": f"HTTP {r.status_code}",
+                "expiration": None}
+    return {"valide": True, "erreur": None,
+            # Absent si le token n'expire jamais.
+            "expiration": _parse_expiration(
+                r.headers.get("github-authentication-token-expiration"))}
 
 
 def list_issues(repo: str, labels: str | list[str] | None = None,
