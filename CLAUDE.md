@@ -56,10 +56,13 @@ journalctl -u <service> -f                    # vérifier les logs
 ## Git & commits (IMPORTANT — override des défauts)
 
 - Committer **uniquement** avec l'identité perso `Francois Geronimi
-  <geronimi.francois@gmail.com>` et **SANS** ligne `Co-Authored-By: Claude`.
-  Le `git config` local du repo est déjà réglé sur cet email — ne pas le remettre
-  sur l'email pro (la machine a un git global pro qui sinon attribue les commits
-  au mauvais compte GitHub). Historique déjà réécrit dans ce sens le 2026-07-25.
+  <4570087+fgeronimi@users.noreply.github.com>` et **SANS** ligne
+  `Co-Authored-By: Claude`. Le `git config` local du repo est déjà réglé sur cet
+  email — ne pas le remettre sur l'email pro (la machine a un git global pro qui
+  sinon attribue les commits au mauvais compte GitHub), ni sur le gmail perso :
+  le compte bloque les pushes qui exposent l'email (« push declined due to email
+  privacy restrictions », depuis le 2026-11-21). Les commits antérieurs au gmail
+  restent tels quels, pas de réécriture d'historique.
 - Messages au format **Conventional Commits** (règle du 2026-07-25, méthode
   détaillée dans `/bakaa-commit`) : `type(scope): description`, description en
   français, footer `Refs: #<n>` si la branche est `ai/<n>`. Types usuels :
