@@ -386,7 +386,8 @@ Les autres labels du cycle : `ai-working`, `ai-failed`, `ai-review`, plus
 Toutes les clés sont documentées dans **`.env.example`** (clé sans valeur) —
 c'est la source de vérité, `make env-diff` compare les clés Mac/Pi sans jamais
 comparer les valeurs. Rappel des scopes du PAT : Contents + Pull requests +
-Issues en write, Actions en read (logs de CI), Administration en read (forge).
+Issues en write, Actions en read (logs de CI), Checks en read (CI rouge),
+Administration en read (forge).
 
 ### Historique des décisions
 Les choix structurants (forge GitHub, polling plutôt que webhooks, PR draft +
