@@ -434,7 +434,7 @@ vécu : PATH node ajouté au repo mais unité installée jamais rafraîchie →
 | `NOTIFY_CHANNEL_ID` | canal notif du bot (#idees) | ✅ |
 | `DISCORD_WEBHOOK_URL` | notif hors-bot (timers, poller) → `#orchestrateur` | ✅ |
 | `CLAUDE_CODE_OAUTH_TOKEN` | auth Claude Code | ✅ |
-| `GITHUB_TOKEN` | poller + forge GitHub (PAT fine-grained : Contents/Pull requests/Issues en écriture, Actions/Checks/Administration en lecture — détail dans `.env.example`) | ✅ |
+| `GITHUB_TOKEN` | poller + forge GitHub (PAT fine-grained : Contents/Pull requests/Issues en écriture, Actions/Administration en lecture — détail dans `.env.example`) | ✅ |
 | `WATCHED_REPO` | repo surveillé `owner/nom` — secours si `data/repos.yaml` absent | ✅ |
 
 ---

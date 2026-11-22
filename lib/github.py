@@ -283,11 +283,22 @@ def get_pull(repo: str, numero: int) -> dict:
 
 
 def list_check_runs(repo: str, ref: str) -> list[dict]:
-    """Check runs (GitHub Actions & co) d'un commit. Vide si pas de CI."""
-    brut = _get(f"/repos/{repo}/commits/{ref}/check-runs", {"per_page": 100})
-    return [{"id": r["id"], "name": r["name"], "status": r["status"],
-             "conclusion": r["conclusion"]}
-            for r in brut["check_runs"]]
+    """Jobs GitHub Actions d'un commit (sha complet). Vide si pas de CI.
+
+    Passe par l'API Actions et non /check-runs : la permission Checks n'existe
+    pas pour les PAT fine-grained (403 systématique, vécu le 2026-11-21).
+    Conséquence assumée : une CI externe (app tierce) n'est pas vue. L'id de
+    job Actions = l'id de check run, donc get_job_log() reste valable.
+    """
+    runs = _get(f"/repos/{repo}/actions/runs",
+                {"head_sha": ref, "per_page": 100})["workflow_runs"]
+    jobs = []
+    for run in runs:
+        brut = _get(f"/repos/{repo}/actions/runs/{run['id']}/jobs", {"per_page": 100})
+        jobs += [{"id": j["id"], "name": j["name"], "status": j["status"],
+                  "conclusion": j["conclusion"]}
+                 for j in brut["jobs"]]
+    return jobs
 
 
 def get_job_log(repo: str, job_id: int) -> str:
