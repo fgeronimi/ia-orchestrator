@@ -74,6 +74,14 @@ def charger_repos() -> list[dict]:
     ]
 
 
+def _resume_erreur(exc: Exception) -> str:
+    # Le nom de classe seul (« GitHubError ») ne permet pas de distinguer un
+    # hoquet d'un 403 de permission : vécu le 2026-11-21, PAT sans Checks,
+    # 24 h de sauts avant d'aller lire journalctl.
+    detail = " ".join(str(exc).split())[:80]
+    return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+
 async def _tour_leger(repo: str) -> list[dict]:
     """Le tour léger d'UN repo (notifs, followup, triage) → issues ai-ready.
 
@@ -131,7 +139,7 @@ async def _premier(repos: list[dict], chercheur, libelle: str,
         except Exception as exc:  # noqa: BLE001 — frontière d'isolation par repo
             print(f"[poll] {entree['repo']} : {libelle} en échec ({exc}) — "
                   f"repo sauté, le tour suivant rattrape")
-            sautes.append(f"{entree['repo']} / {libelle} ({type(exc).__name__})")
+            sautes.append(f"{entree['repo']} / {libelle} ({_resume_erreur(exc)})")
             continue
         if trouvee is not None:
             return entree, trouvee
@@ -149,7 +157,7 @@ async def poll(repos: list[dict]) -> None:
         except Exception as exc:  # noqa: BLE001 — frontière d'isolation par repo
             print(f"[poll] {repo} : tour léger en échec ({exc}) — repo sauté, "
                   f"le tour suivant rattrape")
-            sautes.append(f"{repo} ({type(exc).__name__})")
+            sautes.append(f"{repo} ({_resume_erreur(exc)})")
             continue
         a_faire += [(entree, i) for i in issues]
 

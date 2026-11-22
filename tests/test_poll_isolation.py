@@ -40,7 +40,7 @@ class PollIsolationTest(unittest.IsolatedAsyncioTestCase):
         # une info envoyée, nommant le repo sauté et le type d'erreur
         message = mock_notify.await_args.args[0]
         self.assertIn("acme/casse", message)
-        self.assertIn("RuntimeError", message)
+        self.assertIn("RuntimeError: hoquet GitHub", message)
 
     async def test_sans_echec_aucune_notif_de_saut(self):
         with patch("poll._tour_leger", new=AsyncMock(return_value=[])), \
@@ -76,7 +76,7 @@ class PollIsolationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(vus, ["acme/casse", "acme/toto"])
         message = mock_notify.await_args.args[0]
         self.assertIn("acme/casse", message)
-        self.assertIn("TimeoutError", message)
+        self.assertIn("TimeoutError: Read timed out", message)
 
     async def test_chaine_de_priorite_trouve_et_deballe_la_revision(self):
         """La forme (entrée, trouvé) de _premier reste correctement déballée."""
